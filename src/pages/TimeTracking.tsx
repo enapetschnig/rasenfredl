@@ -658,7 +658,13 @@ const TimeTracking = () => {
 
       if (functionError || !result?.success) {
         hasError = true;
-        console.error("Error creating time entries:", functionError || result?.error);
+        let errMsg = result?.error || functionError?.message || "Unbekannt";
+        try {
+          const body = await (functionError as { context?: Response })?.context?.json?.();
+          if (body?.error) errMsg = body.error;
+        } catch (_) { /* ignore */ }
+        console.error("Error creating time entries:", errMsg, functionError, result);
+        toast({ variant: "destructive", title: `Speicherfehler (Block ${timeBlocks.indexOf(block) + 1})`, description: errMsg });
         continue;
       }
 
@@ -670,11 +676,7 @@ const TimeTracking = () => {
         ? ` (inkl. Team-Mitglieder)`
         : "";
       toast({ title: "Erfolg", description: `${totalEntriesCreated} Eintrag/Einträge gespeichert${teamInfo}` });
-      
-      // Refresh existing entries
       await fetchExistingDayEntries(selectedDate);
-    } else {
-      toast({ variant: "destructive", title: "Fehler", description: "Einige Einträge konnten nicht gespeichert werden" });
     }
     setSaving(false);
   };
