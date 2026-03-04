@@ -2,8 +2,6 @@ import { Resend } from "https://esm.sh/resend@2.0.0";
 import { jsPDF } from "https://esm.sh/jspdf@2.5.2";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
-
 // Supabase Admin Client for reading settings
 const supabaseAdmin = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -440,6 +438,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   try {
+    const apiKey = Deno.env.get("RESEND_API_KEY");
+    if (!apiKey) {
+      return new Response(
+        JSON.stringify({ error: "RESEND_API_KEY is not set in Supabase secrets" }),
+        { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+    const resend = new Resend(apiKey);
+
     const { disturbance, materials, technicianNames, technicianName, photos }: ReportRequest = await req.json();
 
     // Backward compatibility + fallback

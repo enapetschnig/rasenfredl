@@ -176,11 +176,15 @@ export const SignatureDialog = ({
       });
 
       if (sendError) {
-        let detail = sendError.message || "Unbekannter Fehler";
+        let detail = "E-Mail konnte nicht gesendet werden";
         try {
-          // Try to get the actual error from the response body
-          const body = await (sendError as { context?: Response }).context?.json?.();
-          if (body?.error) detail = body.error;
+          const errCtx = (sendError as any).context;
+          if (errCtx) {
+            const body = await errCtx.json();
+            if (body?.error) detail = body.error;
+          } else if (sendData?.error) {
+            detail = sendData.error;
+          }
         } catch (_) { /* ignore */ }
         console.error("Email send error:", sendError, "detail:", detail);
         toast({
