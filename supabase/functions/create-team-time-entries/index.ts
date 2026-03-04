@@ -27,6 +27,7 @@ interface TeamTimeEntriesRequest {
   teamEntries: TimeEntryData[];
   createWorkerLinks?: boolean; // Whether to create time_entry_workers links
   skipMainEntry?: boolean; // Skip creating main entry (for updates where main entry exists)
+  mainEntryId?: string; // ID of already-created main entry (used when skipMainEntry is true)
 }
 
 interface TeamTimeEntriesResponse {
@@ -72,7 +73,7 @@ Deno.serve(async (req: Request) => {
     const userId = user.id;
 
     // Parse request body
-    const { mainEntry, teamEntries, createWorkerLinks = true, skipMainEntry = false }: TeamTimeEntriesRequest = await req.json();
+    const { mainEntry, teamEntries, createWorkerLinks = true, skipMainEntry = false, mainEntryId }: TeamTimeEntriesRequest = await req.json();
 
     // Validate that the main entry belongs to the authenticated user
     if (mainEntry.user_id !== userId) {
@@ -109,7 +110,8 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    let mainEntryResult: { id: string } | null = null;
+    // If mainEntryId is provided (skipMainEntry case), use it directly
+    let mainEntryResult: { id: string } | null = mainEntryId ? { id: mainEntryId } : null;
     let totalCreated = 0;
 
     // Insert main entry for the authenticated user (unless skipMainEntry is true)

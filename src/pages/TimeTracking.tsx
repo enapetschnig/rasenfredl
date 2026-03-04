@@ -609,13 +609,11 @@ const TimeTracking = () => {
     for (const block of timeBlocks) {
       const blockHours = calculateBlockHours(block);
       const pauseMinutes = calculateBlockPauseMinutes(block);
-
-      // Prepare main entry for current user
-      const mainEntry = {
+      const entryData = {
         user_id: user.id,
         datum: selectedDate,
         project_id: block.locationType === "werkstatt" ? null : (block.projectId || null),
-        taetigkeit: block.taetigkeit,
+        taetigkeit: block.taetigkeit || null,
         stunden: blockHours,
         start_time: block.startTime,
         end_time: block.endTime,
@@ -627,48 +625,51 @@ const TimeTracking = () => {
         week_type: null,
       };
 
-      // Prepare team entries
-      const teamEntries = block.selectedEmployees.map(workerId => ({
-        user_id: workerId,
-        datum: selectedDate,
-        project_id: block.locationType === "werkstatt" ? null : (block.projectId || null),
-        taetigkeit: block.taetigkeit,
-        stunden: blockHours,
-        start_time: block.startTime,
-        end_time: block.endTime,
-        pause_minutes: pauseMinutes,
-        pause_start: block.pauseStart || null,
-        pause_end: block.pauseEnd || null,
-        location_type: block.locationType,
-        notizen: null,
-        week_type: null,
-      }));
+      // Insert main entry directly (RLS allows own entries)
+      const { data: mainResult, error: mainError } = await supabase
+        .from("time_entries")
+        .insert(entryData)
+        .select("id")
+        .single();
 
-      // Call Edge Function to create entries (bypasses RLS for team members)
-      const { data: result, error: functionError } = await supabase.functions.invoke(
-        "create-team-time-entries",
-        {
-          body: {
-            mainEntry,
-            teamEntries,
-            createWorkerLinks: true,
-          },
-        }
-      );
-
-      if (functionError || !result?.success) {
+      if (mainError) {
         hasError = true;
-        let errMsg = result?.error || functionError?.message || "Unbekannt";
-        try {
-          const body = await (functionError as { context?: Response })?.context?.json?.();
-          if (body?.error) errMsg = body.error;
-        } catch (_) { /* ignore */ }
-        console.error("Error creating time entries:", errMsg, functionError, result);
-        toast({ variant: "destructive", title: `Speicherfehler (Block ${timeBlocks.indexOf(block) + 1})`, description: errMsg });
+        console.error("Error inserting main entry:", mainError);
+        toast({ variant: "destructive", title: `Speicherfehler (Block ${timeBlocks.indexOf(block) + 1})`, description: mainError.message });
         continue;
       }
 
-      totalEntriesCreated += result.totalCreated || 1;
+      totalEntriesCreated += 1;
+
+      // If team members selected, use Edge Function only for them
+      if (block.selectedEmployees.length > 0) {
+        const teamEntries = block.selectedEmployees.map(workerId => ({
+          user_id: workerId,
+          datum: selectedDate,
+          project_id: entryData.project_id,
+          taetigkeit: entryData.taetigkeit,
+          stunden: blockHours,
+          start_time: block.startTime,
+          end_time: block.endTime,
+          pause_minutes: pauseMinutes,
+          pause_start: block.pauseStart || null,
+          pause_end: block.pauseEnd || null,
+          location_type: block.locationType,
+          notizen: null,
+          week_type: null,
+        }));
+
+        const { data: teamResult, error: teamError } = await supabase.functions.invoke(
+          "create-team-time-entries",
+          { body: { mainEntry: entryData, teamEntries, mainEntryId: mainResult.id, createWorkerLinks: true, skipMainEntry: true } }
+        );
+
+        if (teamError || !teamResult?.success) {
+          console.error("Team entries error (main entry saved):", teamError, teamResult);
+        } else {
+          totalEntriesCreated += teamResult.totalCreated || 0;
+        }
+      }
     }
 
     if (!hasError) {

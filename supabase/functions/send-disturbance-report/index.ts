@@ -523,10 +523,18 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     const emailResponse = await resend.emails.send(emailPayload);
 
-    console.log("Email sent successfully:", emailResponse);
+    if (emailResponse.error) {
+      console.error("Resend API error:", emailResponse.error);
+      return new Response(
+        JSON.stringify({ error: `E-Mail Fehler: ${emailResponse.error.message || JSON.stringify(emailResponse.error)}` }),
+        { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
+    console.log("Email sent successfully:", emailResponse.data);
 
     return new Response(
-      JSON.stringify({ success: true, emailResponse }),
+      JSON.stringify({ success: true, emailId: emailResponse.data?.id }),
       { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
     );
   } catch (error: unknown) {
