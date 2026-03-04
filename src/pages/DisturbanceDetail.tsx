@@ -94,8 +94,14 @@ const DisturbanceDetail = () => {
       .single();
 
     if (error) {
-      toast({ variant: "destructive", title: "Fehler", description: "Regiebericht konnte nicht geladen werden" });
-      navigate("/disturbances");
+      // Auth errors: redirect to login; other errors: stay on page and show toast
+      if (error.code === "PGRST301" || error.message?.includes("JWT") || error.message?.includes("auth")) {
+        navigate("/auth");
+      } else {
+        toast({ variant: "destructive", title: "Fehler", description: "Regiebericht konnte nicht geladen werden. Bitte Seite neu laden." });
+      }
+      setLoading(false);
+      return;
     } else {
       const { data: profile } = await supabase
         .from("profiles")

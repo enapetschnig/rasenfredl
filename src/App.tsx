@@ -4,7 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { toast as sonnerToast } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
 import { OnboardingProvider } from "./contexts/OnboardingContext";
 import { InstallPromptDialog } from "./components/InstallPromptDialog";
 import { useOnboarding } from "./contexts/OnboardingContext";
@@ -35,6 +35,17 @@ function AppContent() {
     showInstallDialog,
     handleInstallDialogClose,
   } = useOnboarding();
+  const navigate = useNavigate();
+
+  // Global auth state listener - redirect to /auth on sign out
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") {
+        navigate("/auth", { replace: true });
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [navigate]);
 
   // Ensure user profile exists (for users created via Cloud dashboard)
   useEffect(() => {
