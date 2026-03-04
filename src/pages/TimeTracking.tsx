@@ -1,10 +1,9 @@
 import { useState, useEffect } from "react";
-import { Clock, Plus, AlertTriangle, CheckCircle2, Calendar, Sun, Trash2 } from "lucide-react";
+import { Clock, Plus, AlertTriangle, CheckCircle2, Calendar, Sun, Trash2, ChevronLeft, ChevronRight, Users, Check } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { format, startOfWeek } from "date-fns";
 import { de } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -83,6 +82,7 @@ const TimeTracking = () => {
 
   const [existingDayEntries, setExistingDayEntries] = useState<ExistingEntry[]>([]);
   const [loadingDayEntries, setLoadingDayEntries] = useState(false);
+  const [employees, setEmployees] = useState<{id: string, name: string}[]>([]);
   
   const [showAbsenceDialog, setShowAbsenceDialog] = useState(false);
   
@@ -186,6 +186,23 @@ const TimeTracking = () => {
   useEffect(() => {
     fetchExistingDayEntries(selectedDate);
   }, [selectedDate]);
+
+  useEffect(() => {
+    const fetchEmployees = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, vorname, nachname")
+        .eq("is_active", true)
+        .neq("id", user.id)
+        .order("vorname");
+      if (data) {
+        setEmployees(data.map(p => ({ id: p.id, name: `${p.vorname} ${p.nachname}`.trim() })));
+      }
+    };
+    fetchEmployees();
+  }, []);
 
   useEffect(() => {
     fetchProjects();
@@ -684,337 +701,422 @@ const TimeTracking = () => {
 
   const isDayBlocked = existingDayEntries.some(e => ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(e.taetigkeit));
 
+  const navigateDay = (direction: -1 | 1) => {
+    const current = new Date(selectedDate + 'T00:00:00');
+    current.setDate(current.getDate() + direction);
+    setSelectedDate(current.toISOString().split('T')[0]);
+  };
+
+  const toggleEmployee = (blockId: string, employeeId: string, current: string[]) => {
+    const updated = current.includes(employeeId)
+      ? current.filter(id => id !== employeeId)
+      : [...current, employeeId];
+    updateBlockEmployees(blockId, updated);
+  };
+
   if (loading) return <div className="p-4">Lädt...</div>;
 
   return (
     <div className="min-h-screen bg-background">
       <PageHeader title="Zeiterfassung" />
-      
-      <div className="p-4">
-        <Card className="max-w-2xl mx-auto">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Clock className="h-5 w-5" />
-                <CardTitle>Zeiterfassung</CardTitle>
-              </div>
-              <Button 
-                variant="outline" 
-                onClick={() => setShowAbsenceDialog(true)} 
-                className="gap-2"
-              >
-                <Calendar className="h-4 w-4" />
-                Abwesenheit
-              </Button>
+
+      <div className="max-w-2xl mx-auto pb-28">
+
+        {/* Date navigation bar */}
+        <div className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b px-4 py-3">
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 rounded-full shrink-0"
+              onClick={() => navigateDay(-1)}
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </Button>
+            <div className="flex-1 text-center">
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="sr-only"
+                id="date-hidden"
+              />
+              <label htmlFor="date-hidden" className="cursor-pointer block">
+                <p className="font-semibold text-sm leading-tight">
+                  {format(new Date(selectedDate + 'T00:00:00'), "EEEE", { locale: de })}
+                </p>
+                <p className="text-lg font-bold leading-tight">
+                  {format(new Date(selectedDate + 'T00:00:00'), "dd. MMMM yyyy", { locale: de })}
+                </p>
+              </label>
             </div>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {/* Date picker */}
-              <div className="space-y-2">
-                <Label htmlFor="date">Datum</Label>
-                <Input 
-                  id="date" 
-                  type="date" 
-                  value={selectedDate} 
-                  onChange={(e) => setSelectedDate(e.target.value)} 
-                  required 
-                />
-                {selectedDate && (
-                  <p className="text-sm text-muted-foreground">
-                    {format(new Date(selectedDate + 'T00:00:00'), "EEEE, dd. MMMM yyyy", { locale: de })}
-                  </p>
-                )}
-                {selectedDate && getAustrianHoliday(new Date(selectedDate + 'T00:00:00')) && (
-                  <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 rounded-lg px-3 py-2 text-sm">
-                    <Sun className="w-4 h-4 text-amber-600 flex-shrink-0" />
-                    <span className="font-medium text-amber-800 dark:text-amber-200">
-                      Heute ist {getAustrianHoliday(new Date(selectedDate + 'T00:00:00'))}
-                    </span>
-                  </div>
-                )}
-              </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 rounded-full shrink-0"
+              onClick={() => navigateDay(1)}
+            >
+              <ChevronRight className="h-5 w-5" />
+            </Button>
+          </div>
 
-              {/* Weekly target info */}
-              <div className="rounded-lg border bg-card p-4">
-                <div className="flex items-center gap-2">
-                  <Badge variant="secondary" className="text-xs">
-                    {getWeeklyTargetHours()}h Wochensoll
-                  </Badge>
-                  <span className="text-xs text-muted-foreground">
-                    Mo-Do: 8,5h • Fr: 5h (inkl. 0,5h Überstunde/ZA)
-                  </span>
-                </div>
-              </div>
+          {/* Holiday banner */}
+          {getAustrianHoliday(new Date(selectedDate + 'T00:00:00')) && (
+            <div className="flex items-center gap-2 mt-2 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 rounded-lg px-3 py-1.5 text-sm">
+              <Sun className="w-4 h-4 text-amber-600 shrink-0" />
+              <span className="font-medium text-amber-800 dark:text-amber-200">
+                {getAustrianHoliday(new Date(selectedDate + 'T00:00:00'))}
+              </span>
+            </div>
+          )}
+        </div>
 
-              {/* Existing entries info box */}
-              {loadingDayEntries ? (
-                <div className="bg-muted/50 rounded-lg p-3 text-sm text-muted-foreground flex items-center gap-2">
-                  <Calendar className="w-4 h-4 animate-pulse" />
-                  Lade Tageseinträge...
-                </div>
-              ) : existingDayEntries.length > 0 ? (
-                <div className={`rounded-lg p-4 space-y-3 ${
-                  isDayBlocked
-                    ? "bg-destructive/10 border border-destructive/30"
-                    : "bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800"
-                }`}>
-                  <div className="flex items-center gap-2 font-medium text-sm">
-                    {isDayBlocked ? (
-                      <>
-                        <AlertTriangle className="w-4 h-4 text-destructive" />
-                        <span className="text-destructive">Tag blockiert ({existingDayEntries[0].taetigkeit})</span>
-                      </>
-                    ) : (
-                      <>
-                        <Calendar className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                        <span className="text-amber-700 dark:text-amber-300">Bereits gebuchte Zeiten</span>
-                      </>
-                    )}
-                  </div>
-                  
-                  {!isDayBlocked && (
-                    <div className="space-y-1.5">
-                      {existingDayEntries.map((entry) => (
-                        <div key={entry.id} className="flex items-center justify-between text-sm bg-background/60 rounded px-2 py-1.5">
-                          <div className="flex items-center gap-2">
-                            <Badge variant="outline" className="font-mono text-xs">
-                              {entry.start_time.substring(0, 5)} - {entry.end_time.substring(0, 5)}
-                            </Badge>
-                            <span className="truncate max-w-[150px]">
-                              {entry.project_name ? `${entry.project_name}` : entry.taetigkeit}
-                            </span>
-                          </div>
-                          <span className="font-medium">{Number(entry.stunden).toFixed(2)}h</span>
-                        </div>
-                      ))}
-                    </div>
+        <form onSubmit={handleSubmit}>
+          <div className="px-4 pt-4 space-y-4">
+
+            {/* Weekly target */}
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Badge variant="secondary" className="text-xs">{getWeeklyTargetHours()}h Wochensoll</Badge>
+              <span>Mo–Do: 8,5h • Fr: 5h</span>
+            </div>
+
+            {/* Existing entries */}
+            {loadingDayEntries ? (
+              <div className="bg-muted/50 rounded-xl p-3 text-sm text-muted-foreground flex items-center gap-2">
+                <Calendar className="w-4 h-4 animate-pulse" />
+                Lade Tageseinträge...
+              </div>
+            ) : existingDayEntries.length > 0 ? (
+              <div className={`rounded-xl p-4 space-y-3 ${
+                isDayBlocked
+                  ? "bg-destructive/10 border border-destructive/30"
+                  : "bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800"
+              }`}>
+                <div className="flex items-center gap-2 font-semibold text-sm">
+                  {isDayBlocked ? (
+                    <>
+                      <AlertTriangle className="w-4 h-4 text-destructive" />
+                      <span className="text-destructive">Tag blockiert — {existingDayEntries[0].taetigkeit}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Calendar className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                      <span className="text-amber-700 dark:text-amber-300">Bereits gebuchte Zeiten</span>
+                    </>
                   )}
-                  
-                  <div className="flex items-center justify-between pt-2 border-t border-amber-200 dark:border-amber-700">
-                    <span className="text-sm font-medium">Tagessumme</span>
-                    <span className="font-bold">
-                      {existingDayEntries.reduce((sum, e) => sum + Number(e.stunden), 0).toFixed(2)} Stunden
-                    </span>
+                </div>
+                {!isDayBlocked && (
+                  <div className="space-y-2">
+                    {existingDayEntries.map((entry) => (
+                      <div key={entry.id} className="flex items-center justify-between text-sm bg-background/70 rounded-lg px-3 py-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="font-mono text-xs bg-muted px-2 py-0.5 rounded shrink-0">
+                            {entry.start_time.substring(0, 5)}–{entry.end_time.substring(0, 5)}
+                          </span>
+                          <span className="truncate text-muted-foreground">
+                            {entry.project_name || entry.taetigkeit || "—"}
+                          </span>
+                        </div>
+                        <span className="font-bold shrink-0 ml-2">{Number(entry.stunden).toFixed(1)}h</span>
+                      </div>
+                    ))}
+                    <div className="flex items-center justify-between pt-1 border-t border-amber-200 dark:border-amber-700 text-sm font-semibold">
+                      <span>Tagessumme</span>
+                      <span>{existingDayEntries.reduce((s, e) => s + Number(e.stunden), 0).toFixed(2)} h</span>
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div className="bg-primary/5 border border-primary/20 rounded-lg p-3 text-sm text-muted-foreground">
-                  <p className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-green-600" />
-                    Noch keine Einträge für diesen Tag
-                  </p>
-                </div>
-              )}
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground bg-primary/5 border border-primary/20 rounded-xl px-3 py-2.5">
+                <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
+                Noch keine Einträge für diesen Tag
+              </div>
+            )}
 
-              {/* Only show form if day is not blocked */}
-              {!isDayBlocked && (
-                <>
+            {/* Abwesenheit button */}
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full gap-2 h-11"
+              onClick={() => setShowAbsenceDialog(true)}
+            >
+              <Calendar className="h-4 w-4" />
+              Abwesenheit erfassen
+            </Button>
 
-                  {/* Time Blocks */}
-                  <div className="space-y-4">
-                    {timeBlocks.map((block, index) => (
-                      <div 
-                        key={block.id} 
-                        className="border rounded-lg p-4 space-y-4 bg-card"
-                      >
-                        {/* Block header */}
-                        <div className="flex items-center justify-between">
-                          <h3 className="font-semibold text-sm flex items-center gap-2">
-                            <Clock className="w-4 h-4" />
-                            {timeBlocks.length > 1 ? `Zeitblock ${index + 1}` : "Arbeitszeit"}
-                          </h3>
-                          {timeBlocks.length > 1 && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => removeBlock(block.id)}
-                              className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          )}
+            {/* Time Blocks */}
+            {!isDayBlocked && (
+              <div className="space-y-4">
+                {timeBlocks.map((block, index) => (
+                  <div key={block.id} className="border rounded-2xl overflow-hidden bg-card shadow-sm">
+                    {/* Block header */}
+                    <div className="flex items-center justify-between px-4 py-3 bg-muted/40 border-b">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
+                          <Clock className="w-3.5 h-3.5 text-primary" />
                         </div>
-
-                        {/* Location selection */}
-                        <div className="space-y-2">
-                          <Label>Arbeitsort</Label>
-                          <RadioGroup 
-                            value={block.locationType} 
-                            onValueChange={(value: 'baustelle' | 'werkstatt') => updateBlock(block.id, { locationType: value })} 
-                            className="grid grid-cols-2 gap-4"
-                          >
-                            <div>
-                              <RadioGroupItem value="baustelle" id={`baustelle-${block.id}`} className="peer sr-only" />
-                              <Label htmlFor={`baustelle-${block.id}`} className="flex h-12 cursor-pointer items-center justify-center rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent peer-data-[state=checked]:border-primary text-sm">
-                                🏗️ Baustelle
-                              </Label>
-                            </div>
-                            <div>
-                              <RadioGroupItem value="werkstatt" id={`werkstatt-${block.id}`} className="peer sr-only" />
-                              <Label htmlFor={`werkstatt-${block.id}`} className="flex h-12 cursor-pointer items-center justify-center rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent peer-data-[state=checked]:border-primary text-sm">
-                                🔧 Werkstatt
-                              </Label>
-                            </div>
-                          </RadioGroup>
-                        </div>
-
-                        {/* Project selection - only for Baustelle */}
-                        {block.locationType === "baustelle" && (
-                          <div className="space-y-2">
-                            <Label>Projekt <span className="text-muted-foreground font-normal">(optional)</span></Label>
-                            <Select 
-                              value={block.projectId} 
-                              onValueChange={(value) => {
-                                if (value === "new") {
-                                  setPendingBlockIdForNewProject(block.id);
-                                  setShowNewProjectDialog(true);
-                                } else {
-                                  updateBlock(block.id, { projectId: value });
-                                }
-                              }}
-                            >
-                              <SelectTrigger><SelectValue placeholder="Projekt auswählen" /></SelectTrigger>
-                              <SelectContent>
-                                {projects.map((p) => (
-                                  <SelectItem key={p.id} value={p.id}>{p.name} ({p.plz})</SelectItem>
-                                ))}
-                                <SelectItem value="new" className="text-primary font-semibold">
-                                  <div className="flex items-center gap-2"><Plus className="w-4 h-4" />Neues Projekt erstellen</div>
-                                </SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
+                        <span className="font-semibold text-sm">
+                          {timeBlocks.length > 1 ? `Block ${index + 1}` : "Arbeitszeit"}
+                        </span>
+                        {calculateBlockHours(block) > 0 && (
+                          <Badge variant="secondary" className="text-xs font-bold">
+                            {calculateBlockHours(block).toFixed(1)}h
+                          </Badge>
                         )}
+                      </div>
+                      {timeBlocks.length > 1 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeBlock(block.id)}
+                          className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </div>
 
-                        {/* Activity - optional */}
-                        <div className="space-y-2">
-                          <Label>Tätigkeit <span className="text-muted-foreground font-normal">(optional)</span></Label>
-                          <Input
-                            value={block.taetigkeit}
-                            onChange={(e) => updateBlock(block.id, { taetigkeit: e.target.value })}
-                            placeholder="Optional - auswählen oder eingeben..."
-                            list={`taetigkeit-list-${block.id}`}
-                          />
-                          <datalist id={`taetigkeit-list-${block.id}`}>
-                            <option value="Rasen mähen" />
-                            <option value="Rasenkantenschneiden" />
-                            <option value="Rasen düngen" />
-                            <option value="Rasen vertikutieren" />
-                            <option value="Rasen bewässern" />
-                            <option value="Rasen säen / Nachsaat" />
-                            <option value="Rollrasen verlegen" />
-                            <option value="Unkrautbekämpfung" />
-                            <option value="Heckenschneiden" />
-                            <option value="Baumschnitt / Baumpflege" />
-                            <option value="Laubrechen / Laubblasен" />
-                            <option value="Bepflanzung" />
-                            <option value="Böschungspflege" />
-                            <option value="Pflasterarbeiten" />
-                            <option value="Aufräumen / Reinigung" />
-                            <option value="Fahrt / Anfahrt" />
-                            <option value="Werkstatt" />
-                            <option value="Sonstiges" />
-                          </datalist>
+                    <div className="p-4 space-y-4">
+                      {/* Location toggle */}
+                      <RadioGroup
+                        value={block.locationType}
+                        onValueChange={(value: 'baustelle' | 'werkstatt') => updateBlock(block.id, { locationType: value })}
+                        className="grid grid-cols-2 gap-2"
+                      >
+                        <div>
+                          <RadioGroupItem value="baustelle" id={`baustelle-${block.id}`} className="peer sr-only" />
+                          <Label
+                            htmlFor={`baustelle-${block.id}`}
+                            className="flex h-12 cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-muted bg-background hover:bg-accent peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/5 peer-data-[state=checked]:text-primary font-medium text-sm transition-all"
+                          >
+                            🏗️ Baustelle
+                          </Label>
                         </div>
+                        <div>
+                          <RadioGroupItem value="werkstatt" id={`werkstatt-${block.id}`} className="peer sr-only" />
+                          <Label
+                            htmlFor={`werkstatt-${block.id}`}
+                            className="flex h-12 cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-muted bg-background hover:bg-accent peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/5 peer-data-[state=checked]:text-primary font-medium text-sm transition-all"
+                          >
+                            🔧 Werkstatt
+                          </Label>
+                        </div>
+                      </RadioGroup>
 
-                        {/* Start/End/Pause time inputs */}
+                      {/* Project */}
+                      {block.locationType === "baustelle" && (
+                        <Select
+                          value={block.projectId}
+                          onValueChange={(value) => {
+                            if (value === "new") {
+                              setPendingBlockIdForNewProject(block.id);
+                              setShowNewProjectDialog(true);
+                            } else {
+                              updateBlock(block.id, { projectId: value });
+                            }
+                          }}
+                        >
+                          <SelectTrigger className="h-12 rounded-xl">
+                            <SelectValue placeholder="📍 Projekt wählen (optional)" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {projects.map((p) => (
+                              <SelectItem key={p.id} value={p.id}>{p.name} ({p.plz})</SelectItem>
+                            ))}
+                            <SelectItem value="new" className="text-primary font-semibold">
+                              <div className="flex items-center gap-2"><Plus className="w-4 h-4" />Neues Projekt</div>
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}
+
+                      {/* Activity */}
+                      <Input
+                        value={block.taetigkeit}
+                        onChange={(e) => updateBlock(block.id, { taetigkeit: e.target.value })}
+                        placeholder="✏️ Tätigkeit (optional)"
+                        list={`taetigkeit-list-${block.id}`}
+                        className="h-12 rounded-xl"
+                      />
+                      <datalist id={`taetigkeit-list-${block.id}`}>
+                        <option value="Rasen mähen" />
+                        <option value="Rasenkantenschneiden" />
+                        <option value="Rasen düngen" />
+                        <option value="Rasen vertikutieren" />
+                        <option value="Rasen bewässern" />
+                        <option value="Rasen säen / Nachsaat" />
+                        <option value="Rollrasen verlegen" />
+                        <option value="Unkrautbekämpfung" />
+                        <option value="Heckenschneiden" />
+                        <option value="Baumschnitt / Baumpflege" />
+                        <option value="Laubrechen / Laubblasen" />
+                        <option value="Bepflanzung" />
+                        <option value="Böschungspflege" />
+                        <option value="Pflasterarbeiten" />
+                        <option value="Aufräumen / Reinigung" />
+                        <option value="Fahrt / Anfahrt" />
+                        <option value="Werkstatt" />
+                        <option value="Sonstiges" />
+                      </datalist>
+
+                      {/* Time inputs */}
+                      <div className="space-y-3">
                         <div className="grid grid-cols-2 gap-3">
                           <div className="space-y-1.5">
-                            <Label>Beginn</Label>
+                            <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Beginn</Label>
                             <Input
                               type="time"
                               value={block.startTime}
                               onChange={(e) => updateBlock(block.id, { startTime: e.target.value })}
                               required
+                              className="h-12 rounded-xl text-base font-semibold text-center"
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label>Ende</Label>
+                            <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Ende</Label>
                             <Input
                               type="time"
                               value={block.endTime}
                               onChange={(e) => updateBlock(block.id, { endTime: e.target.value })}
                               required
+                              className="h-12 rounded-xl text-base font-semibold text-center"
                             />
                           </div>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                           <div className="space-y-1.5">
-                            <Label>Pause von <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                            <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pause von</Label>
                             <Input
                               type="time"
                               value={block.pauseStart}
                               onChange={(e) => updateBlock(block.id, { pauseStart: e.target.value })}
+                              className="h-11 rounded-xl text-center"
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label>Pause bis <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                            <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pause bis</Label>
                             <Input
                               type="time"
                               value={block.pauseEnd}
                               onChange={(e) => updateBlock(block.id, { pauseEnd: e.target.value })}
+                              className="h-11 rounded-xl text-center"
                             />
                           </div>
                         </div>
-                        {/* Regelarbeitszeit button */}
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            const dateObj = new Date(selectedDate + 'T00:00:00');
-                            const defaults = getDefaultWorkTimes(dateObj);
-                            if (defaults) {
-                              updateBlock(block.id, {
-                                startTime: defaults.startTime,
-                                endTime: defaults.endTime,
-                                pauseStart: defaults.pauseStart,
-                                pauseEnd: defaults.pauseEnd,
-                              });
-                            }
-                          }}
-                          className="w-full text-xs"
-                        >
-                          <Sun className="w-3 h-3 mr-1" />
-                          Regelarbeitszeit einfüllen
-                        </Button>
-
-                        {/* Block hours */}
-                        <div className="bg-muted/50 rounded px-3 py-2 flex items-center justify-between text-sm">
-                          <span>Stunden</span>
-                          <span className="font-bold">{calculateBlockHours(block).toFixed(2)} h</span>
-                        </div>
                       </div>
-                    ))}
+
+                      {/* Regelarbeitszeit shortcut */}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const defaults = getDefaultWorkTimes(new Date(selectedDate + 'T00:00:00'));
+                          if (defaults) updateBlock(block.id, {
+                            startTime: defaults.startTime,
+                            endTime: defaults.endTime,
+                            pauseStart: defaults.pauseStart,
+                            pauseEnd: defaults.pauseEnd,
+                          });
+                        }}
+                        className="w-full h-10 rounded-xl text-xs gap-1.5"
+                      >
+                        <Sun className="w-3.5 h-3.5" />
+                        Regelarbeitszeit übernehmen
+                      </Button>
+
+                      {/* Employee selection */}
+                      {employees.length > 0 && (
+                        <div className="space-y-2">
+                          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                            <Users className="w-3.5 h-3.5" />
+                            Mitarbeiter mitbuchen
+                          </Label>
+                          <div className="flex flex-wrap gap-2">
+                            {employees.map((emp) => {
+                              const selected = block.selectedEmployees.includes(emp.id);
+                              return (
+                                <button
+                                  key={emp.id}
+                                  type="button"
+                                  onClick={() => toggleEmployee(block.id, emp.id, block.selectedEmployees)}
+                                  className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border-2 transition-all ${
+                                    selected
+                                      ? "border-primary bg-primary/10 text-primary"
+                                      : "border-muted bg-background text-muted-foreground hover:border-primary/40"
+                                  }`}
+                                >
+                                  {selected && <Check className="w-3.5 h-3.5" />}
+                                  {emp.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {block.selectedEmployees.length > 0 && (
+                            <p className="text-xs text-primary font-medium">
+                              {block.selectedEmployees.length} Mitarbeiter werden mitgebucht
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
+                ))}
 
-                  {/* Add another block button */}
-                  <Button 
-                    type="button" 
-                    variant="outline" 
-                    onClick={addTimeBlock}
-                    className="w-full gap-2 border-dashed"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Weitere Stunden hinzufügen
-                  </Button>
+                {/* Add block */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={addTimeBlock}
+                  className="w-full h-12 rounded-xl gap-2 border-dashed border-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  Weiteren Zeitblock hinzufügen
+                </Button>
 
-                  {/* Total hours */}
-                  <div className="bg-primary/10 border border-primary/30 rounded-lg p-4 flex items-center justify-between">
-                    <span className="font-medium">Gesamt zu buchen</span>
-                    <span className="text-2xl font-bold">{calculateTotalHours()} h</span>
+                {/* Total hours */}
+                <div className="bg-primary/10 border-2 border-primary/20 rounded-2xl p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Gesamt heute</p>
+                    <p className="text-3xl font-black text-primary">{calculateTotalHours()} h</p>
                   </div>
+                  <Clock className="w-8 h-8 text-primary/30" />
+                </div>
+              </div>
+            )}
+          </div>
+        </form>
+      </div>
 
-                  <Button type="submit" className="w-full" disabled={saving}>
-                    {saving ? "Wird gespeichert..." : `${timeBlocks.length > 1 ? 'Alle Einträge' : 'Stunden'} erfassen`}
-                  </Button>
-                </>
+      {/* Sticky submit button */}
+      {!isDayBlocked && (
+        <div className="fixed bottom-0 left-0 right-0 p-4 bg-background/95 backdrop-blur-sm border-t safe-area-bottom">
+          <div className="max-w-2xl mx-auto">
+            <Button
+              type="button"
+              onClick={(e) => handleSubmit(e as any)}
+              className="w-full h-14 text-base font-bold rounded-2xl shadow-lg"
+              disabled={saving}
+            >
+              {saving ? (
+                <span className="flex items-center gap-2">
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Wird gespeichert...
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5" />
+                  {timeBlocks.length > 1 ? `${timeBlocks.length} Einträge` : "Stunden"} erfassen
+                </span>
               )}
-            </form>
-          </CardContent>
-        </Card>
+            </Button>
+          </div>
+        </div>
+      )}
 
         {/* New Project Dialog */}
         <Dialog open={showNewProjectDialog} onOpenChange={setShowNewProjectDialog}>
@@ -1028,13 +1130,13 @@ const TimeTracking = () => {
               <div><Label>PLZ *</Label><Input value={newProjectPlz} onChange={(e) => setNewProjectPlz(e.target.value)} maxLength={5} /></div>
               <div><Label>Adresse</Label><Input value={newProjectAddress} onChange={(e) => setNewProjectAddress(e.target.value)} /></div>
               <div className="flex gap-2 justify-end">
-                <Button 
-                  variant="outline" 
-                  onClick={() => { 
-                    setShowNewProjectDialog(false); 
-                    setNewProjectName(""); 
-                    setNewProjectPlz(""); 
-                    setNewProjectAddress(""); 
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowNewProjectDialog(false);
+                    setNewProjectName("");
+                    setNewProjectPlz("");
+                    setNewProjectAddress("");
                     setPendingBlockIdForNewProject(null);
                   }}
                   disabled={creatingProject}
@@ -1265,8 +1367,6 @@ const TimeTracking = () => {
             </div>
           </DialogContent>
         </Dialog>
-
-      </div>
     </div>
   );
 };
