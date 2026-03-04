@@ -1,6 +1,6 @@
 import { Resend } from "https://esm.sh/resend@2.0.0";
-import { jsPDF } from "https://esm.sh/jspdf@2.5.2";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// jsPDF is loaded dynamically inside generatePDF to avoid module-load failures in Deno
 
 // Supabase Admin Client for reading settings
 const supabaseAdmin = createClient(
@@ -94,6 +94,9 @@ async function fetchImageAsBase64(url: string): Promise<string | null> {
 async function generatePDF(data: ReportRequest & { technicians: string[] }, photoImages: (string | null)[]): Promise<string> {
   const { disturbance, materials, technicians, photos } = data;
   
+  // Dynamic import so a load failure is caught by the caller's try/catch
+  const { jsPDF } = await import("https://esm.sh/jspdf@2.5.2");
+
   // Create PDF document
   const doc = new jsPDF({
     orientation: "portrait",
