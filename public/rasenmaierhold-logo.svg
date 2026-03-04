@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 64" fill="none">
+  <!-- Grass blades (left decoration) -->
+  <path d="M8 56 Q7 38 11 28 Q15 38 14 56" fill="#2d6b1f"/>
+  <path d="M16 56 Q12 32 20 18 Q28 32 24 56" fill="#3a8025"/>
+  <path d="M30 56 Q30 38 34 30 Q38 38 38 56" fill="#2d6b1f"/>
+  <path d="M38 56 Q36 40 42 32 Q46 40 44 56" fill="#4a9030"/>
+  <!-- Ground bar -->
+  <rect x="2" y="54" width="48" height="6" rx="3" fill="#1d4d15"/>
+  <!-- Sun circle (top right of grass area) -->
+  <circle cx="34" cy="18" r="9" fill="#C9A020" opacity="0.85"/>
+  <!-- "Rasen" text - cursive/italic serif in dark gold -->
+  <text
+    x="58"
+    y="30"
+    font-family="Georgia, 'Times New Roman', serif"
+    font-size="28"
+    fill="#B8860B"
+    font-style="italic"
+    font-weight="bold"
+    letter-spacing="1">Rasen</text>
+  <!-- Thin divider -->
+  <line x1="58" y1="36" x2="218" y2="36" stroke="#B8860B" stroke-width="0.8" opacity="0.35"/>
+  <!-- "Maierhold" text -->
+  <text
+    x="58"
+    y="56"
+    font-family="Georgia, 'Times New Roman', serif"
+    font-size="24"
+    fill="#B8860B"
+    font-style="italic"
+    font-weight="bold"
+    letter-spacing="0.5">Maierhold</text>
+</svg>

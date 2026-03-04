@@ -1,0 +1,124 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* Warm, slightly golden base */
+    --background: 43 30% 97%;
+    --foreground: 30 20% 10%;
+
+    --card: 43 25% 99%;
+    --card-foreground: 30 20% 10%;
+
+    --popover: 43 25% 99%;
+    --popover-foreground: 30 20% 10%;
+
+    /* Rasen Maierhold - Goldgelb als Hauptfarbe (wie das Logo) */
+    --primary: 43 85% 48%;
+    --primary-foreground: 30 25% 8%;
+
+    /* Waldgrün als Secondary */
+    --secondary: 125 45% 88%;
+    --secondary-foreground: 125 55% 22%;
+
+    --muted: 43 20% 92%;
+    --muted-foreground: 30 10% 42%;
+
+    /* Grün als Accent */
+    --accent: 125 50% 30%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 43 20% 85%;
+    --input: 43 20% 90%;
+    --ring: 43 85% 48%;
+
+    --radius: 0.75rem;
+
+    /* Custom design tokens - Rasen Maierhold Branding */
+    --maierhold-green: 125 55% 27%;
+    --maierhold-dark: 125 60% 18%;
+    --maierhold-light: 125 45% 42%;
+    --maierhold-gold: 43 85% 48%;
+    --maierhold-gold-light: 43 80% 58%;
+    --neutral-gray: 0 0% 50%;
+    
+    /* Shadows */
+    --shadow-soft: 0 2px 8px hsl(0 0% 15% / 0.08);
+    --shadow-medium: 0 4px 16px hsl(0 0% 15% / 0.12);
+    
+    /* Transitions */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    --sidebar-background: 0 0% 98%;
+
+    --sidebar-foreground: 240 5.3% 26.1%;
+
+    --sidebar-primary: 240 5.9% 10%;
+
+    --sidebar-primary-foreground: 0 0% 98%;
+
+    --sidebar-accent: 240 4.8% 95.9%;
+
+    --sidebar-accent-foreground: 240 5.9% 10%;
+
+    --sidebar-border: 220 13% 91%;
+
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  .dark {
+    --background: 30 15% 10%;
+    --foreground: 43 20% 92%;
+
+    --card: 30 12% 14%;
+    --card-foreground: 43 20% 92%;
+
+    --popover: 30 12% 14%;
+    --popover-foreground: 43 20% 92%;
+
+    --primary: 43 80% 52%;
+    --primary-foreground: 30 25% 8%;
+
+    --secondary: 125 35% 20%;
+    --secondary-foreground: 125 30% 80%;
+
+    --muted: 30 10% 18%;
+    --muted-foreground: 43 15% 58%;
+
+    --accent: 125 45% 42%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 30 10% 22%;
+    --input: 30 10% 22%;
+    --ring: 43 80% 52%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
