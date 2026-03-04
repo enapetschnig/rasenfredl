@@ -53,27 +53,23 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Create Supabase client with user's token to verify identity
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    const supabaseUser = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    // Verify user
+    // Verify user via service role (standard pattern for Edge Functions)
     const token = authHeader.replace("Bearer ", "");
-    const { data: claimsData, error: claimsError } = await supabaseUser.auth.getClaims(token);
-    
-    if (claimsError || !claimsData?.claims) {
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+
+    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
+
+    if (authError || !user) {
       return new Response(
         JSON.stringify({ success: false, error: "Unauthorized" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const userId = claimsData.claims.sub;
+    const userId = user.id;
 
     // Parse request body
     const { mainEntry, teamEntries, createWorkerLinks = true, skipMainEntry = false }: TeamTimeEntriesRequest = await req.json();
@@ -85,9 +81,6 @@ Deno.serve(async (req: Request) => {
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
-
-    // Create admin client with service role key to bypass RLS
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
     // Validate team members exist and are active
     if (teamEntries.length > 0) {
