@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { Clock, Plus, AlertTriangle, CheckCircle2, Calendar, Sun, Trash2, ChevronLeft, ChevronRight, Users, Check, ArrowLeft, FileText, Pencil } from "lucide-react";
+import { Clock, Plus, AlertTriangle, CheckCircle2, Calendar, Sun, Trash2, ChevronLeft, ChevronRight, Users, Check, ArrowLeft, FileText, Pencil, ChevronDown, X } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { format, startOfWeek } from "date-fns";
 import { de } from "date-fns/locale";
@@ -12,6 +12,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { toast as sonnerToast } from "sonner";
@@ -1181,67 +1182,75 @@ const TimeTracking = () => {
                         </Select>
                       )}
 
-                      {/* Activity - multi-select chips */}
+                      {/* Activity - dropdown multi-select */}
                       <div className="space-y-2">
                         <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tätigkeiten (optional)</Label>
-                        <div className="flex flex-wrap gap-1.5">
-                          {[
-                            "Rasen mähen", "Rasenkantenschneiden", "Rasen düngen", "Rasen vertikutieren",
-                            "Rasen bewässern", "Rasen säen / Nachsaat", "Rollrasen verlegen",
-                            "Unkrautbekämpfung", "Heckenschneiden", "Baumschnitt / Baumpflege",
-                            "Laubrechen / Laubblasen", "Bepflanzung", "Böschungspflege",
-                            "Pflasterarbeiten", "Aufräumen / Reinigung", "Fahrt / Anfahrt", "Lager",
-                          ].map((t) => {
-                            const selected = block.taetigkeit.split("\n").filter(Boolean);
-                            const isSelected = selected.includes(t);
-                            return (
-                              <button
-                                key={t}
-                                type="button"
-                                onClick={() => {
-                                  const current = block.taetigkeit.split("\n").filter(Boolean);
-                                  const updated = isSelected
-                                    ? current.filter(x => x !== t)
-                                    : [...current, t];
-                                  updateBlock(block.id, { taetigkeit: updated.join("\n") });
-                                }}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-                                  isSelected
-                                    ? "bg-primary text-primary-foreground border-primary"
-                                    : "bg-muted/50 text-foreground border-muted hover:bg-muted"
-                                }`}
-                              >
-                                {t}
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <Input
-                          value={block.taetigkeit.split("\n").filter(Boolean).filter(t => ![
-                            "Rasen mähen", "Rasenkantenschneiden", "Rasen düngen", "Rasen vertikutieren",
-                            "Rasen bewässern", "Rasen säen / Nachsaat", "Rollrasen verlegen",
-                            "Unkrautbekämpfung", "Heckenschneiden", "Baumschnitt / Baumpflege",
-                            "Laubrechen / Laubblasen", "Bepflanzung", "Böschungspflege",
-                            "Pflasterarbeiten", "Aufräumen / Reinigung", "Fahrt / Anfahrt", "Lager",
-                          ].includes(t)).join(", ")}
-                          onChange={(e) => {
-                            const predefined = block.taetigkeit.split("\n").filter(Boolean).filter(t => [
-                              "Rasen mähen", "Rasenkantenschneiden", "Rasen düngen", "Rasen vertikutieren",
-                              "Rasen bewässern", "Rasen säen / Nachsaat", "Rollrasen verlegen",
-                              "Unkrautbekämpfung", "Heckenschneiden", "Baumschnitt / Baumpflege",
-                              "Laubrechen / Laubblasen", "Bepflanzung", "Böschungspflege",
-                              "Pflasterarbeiten", "Aufräumen / Reinigung", "Fahrt / Anfahrt", "Lager",
-                            ].includes(t));
-                            const custom = e.target.value.trim() ? [e.target.value.trim()] : [];
-                            updateBlock(block.id, { taetigkeit: [...predefined, ...custom].join("\n") });
-                          }}
-                          placeholder="Oder eigene Tätigkeit eingeben..."
-                          className="h-10 rounded-xl text-sm"
-                        />
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="w-full h-12 justify-between rounded-xl text-sm font-normal"
+                            >
+                              {(() => {
+                                const selected = block.taetigkeit.split("\n").filter(Boolean);
+                                if (selected.length === 0) return <span className="text-muted-foreground">Tätigkeit wählen...</span>;
+                                if (selected.length === 1) return selected[0];
+                                return `${selected.length} Tätigkeiten ausgewählt`;
+                              })()}
+                              <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                            <div className="max-h-60 overflow-y-auto p-1">
+                              {[
+                                "Rasen mähen", "Rasenkantenschneiden", "Rasen düngen", "Rasen vertikutieren",
+                                "Rasen bewässern", "Rasen säen / Nachsaat", "Rollrasen verlegen",
+                                "Unkrautbekämpfung", "Heckenschneiden", "Baumschnitt / Baumpflege",
+                                "Laubrechen / Laubblasen", "Bepflanzung", "Böschungspflege",
+                                "Pflasterarbeiten", "Aufräumen / Reinigung", "Fahrt / Anfahrt", "Lager",
+                              ].map((t) => {
+                                const selected = block.taetigkeit.split("\n").filter(Boolean).includes(t);
+                                return (
+                                  <button
+                                    key={t}
+                                    type="button"
+                                    onClick={() => {
+                                      const current = block.taetigkeit.split("\n").filter(Boolean);
+                                      const updated = selected
+                                        ? current.filter(x => x !== t)
+                                        : [...current, t];
+                                      updateBlock(block.id, { taetigkeit: updated.join("\n") });
+                                    }}
+                                    className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm text-left transition-colors ${
+                                      selected
+                                        ? "bg-primary/10 text-primary font-medium"
+                                        : "hover:bg-muted text-foreground"
+                                    }`}
+                                  >
+                                    <span className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${
+                                      selected
+                                        ? "border-primary bg-primary text-primary-foreground"
+                                        : "border-muted-foreground/30"
+                                    }`}>
+                                      {selected && <Check className="w-3 h-3" />}
+                                    </span>
+                                    {t}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+
+                        {/* Selected tags */}
                         {block.taetigkeit.split("\n").filter(Boolean).length > 0 && (
-                          <div className="flex flex-wrap gap-1">
+                          <div className="flex flex-wrap gap-1.5">
                             {block.taetigkeit.split("\n").filter(Boolean).map((t, i) => (
-                              <Badge key={i} variant="secondary" className="text-xs">
+                              <span
+                                key={i}
+                                className="inline-flex items-center gap-1 bg-primary/10 text-primary text-xs font-medium px-2.5 py-1 rounded-lg"
+                              >
                                 {t}
                                 <button
                                   type="button"
@@ -1249,14 +1258,31 @@ const TimeTracking = () => {
                                     const updated = block.taetigkeit.split("\n").filter(Boolean).filter((_, idx) => idx !== i);
                                     updateBlock(block.id, { taetigkeit: updated.join("\n") });
                                   }}
-                                  className="ml-1 hover:text-destructive"
+                                  className="hover:bg-primary/20 rounded p-0.5"
                                 >
-                                  ×
+                                  <X className="w-3 h-3" />
                                 </button>
-                              </Badge>
+                              </span>
                             ))}
                           </div>
                         )}
+
+                        {/* Custom activity input */}
+                        <Input
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              const input = e.currentTarget;
+                              if (input.value.trim()) {
+                                const current = block.taetigkeit.split("\n").filter(Boolean);
+                                updateBlock(block.id, { taetigkeit: [...current, input.value.trim()].join("\n") });
+                                input.value = "";
+                              }
+                            }
+                          }}
+                          placeholder="Eigene Tätigkeit eingeben + Enter..."
+                          className="h-10 rounded-xl text-sm"
+                        />
                       </div>
 
                       {/* Time inputs */}
