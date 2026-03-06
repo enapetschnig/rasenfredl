@@ -454,7 +454,7 @@ export default function Index() {
                         <p className="font-semibold text-sm truncate">
                           {entry.projects?.name || (entry.disturbance_id ? "Regiebericht" : "Unbekanntes Projekt")}
                         </p>
-                        <p className="text-xs text-muted-foreground truncate">{entry.taetigkeit}</p>
+                        <p className="text-xs text-muted-foreground truncate">{entry.taetigkeit ? entry.taetigkeit.split("\n").filter(Boolean).join(", ") : ""}</p>
                       </div>
                       <div className="text-right ml-3 shrink-0">
                         <p className="font-bold">{entry.stunden} h</p>

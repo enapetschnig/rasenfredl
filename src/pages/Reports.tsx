@@ -216,7 +216,7 @@ const Reports = () => {
                   <td>${new Date(entry.datum).toLocaleDateString('de-DE')}</td>
                   <td>${entry.profiles ? `${entry.profiles.vorname} ${entry.profiles.nachname}` : 'Unbekannt'}</td>
                   <td>${entry.projects?.name || 'Unbekanntes Projekt'}</td>
-                  <td>${entry.taetigkeit}</td>
+                  <td>${entry.taetigkeit ? entry.taetigkeit.split("\n").filter(Boolean).join(", ") : ""}</td>
                   <td><strong>${entry.stunden} h</strong></td>
                   <td>${entry.notizen || '-'}</td>
                 </tr>
@@ -460,7 +460,7 @@ const Reports = () => {
                   </div>
                   <div className="mt-4">
                     <p className="text-sm font-medium text-muted-foreground">Tätigkeit</p>
-                    <p className="mt-1">{entry.taetigkeit}</p>
+                    <p className="mt-1">{entry.taetigkeit ? entry.taetigkeit.split("\n").filter(Boolean).join(", ") : ""}</p>
                   </div>
                   {entry.notizen && (
                     <div className="mt-3">

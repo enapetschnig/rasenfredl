@@ -1023,7 +1023,7 @@ const TimeTracking = () => {
                                 {entry.start_time.substring(0, 5)}–{entry.end_time.substring(0, 5)}
                               </span>
                               <span className="truncate text-muted-foreground">
-                                {entry.project_name || entry.taetigkeit || "—"}
+                                {entry.project_name || (entry.taetigkeit ? entry.taetigkeit.split("\n").filter(Boolean).join(", ") : "—")}
                               </span>
                             </div>
                             <div className="flex items-center gap-0.5 shrink-0 ml-2">
@@ -1181,9 +1181,9 @@ const TimeTracking = () => {
                         </Select>
                       )}
 
-                      {/* Activity - tappable chips */}
+                      {/* Activity - multi-select chips */}
                       <div className="space-y-2">
-                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tätigkeit (optional)</Label>
+                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tätigkeiten (optional)</Label>
                         <div className="flex flex-wrap gap-1.5">
                           {[
                             "Rasen mähen", "Rasenkantenschneiden", "Rasen düngen", "Rasen vertikutieren",
@@ -1191,27 +1191,72 @@ const TimeTracking = () => {
                             "Unkrautbekämpfung", "Heckenschneiden", "Baumschnitt / Baumpflege",
                             "Laubrechen / Laubblasen", "Bepflanzung", "Böschungspflege",
                             "Pflasterarbeiten", "Aufräumen / Reinigung", "Fahrt / Anfahrt", "Lager",
-                          ].map((t) => (
-                            <button
-                              key={t}
-                              type="button"
-                              onClick={() => updateBlock(block.id, { taetigkeit: block.taetigkeit === t ? "" : t })}
-                              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-                                block.taetigkeit === t
-                                  ? "bg-primary text-primary-foreground border-primary"
-                                  : "bg-muted/50 text-foreground border-muted hover:bg-muted"
-                              }`}
-                            >
-                              {t}
-                            </button>
-                          ))}
+                          ].map((t) => {
+                            const selected = block.taetigkeit.split("\n").filter(Boolean);
+                            const isSelected = selected.includes(t);
+                            return (
+                              <button
+                                key={t}
+                                type="button"
+                                onClick={() => {
+                                  const current = block.taetigkeit.split("\n").filter(Boolean);
+                                  const updated = isSelected
+                                    ? current.filter(x => x !== t)
+                                    : [...current, t];
+                                  updateBlock(block.id, { taetigkeit: updated.join("\n") });
+                                }}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                                  isSelected
+                                    ? "bg-primary text-primary-foreground border-primary"
+                                    : "bg-muted/50 text-foreground border-muted hover:bg-muted"
+                                }`}
+                              >
+                                {t}
+                              </button>
+                            );
+                          })}
                         </div>
                         <Input
-                          value={block.taetigkeit}
-                          onChange={(e) => updateBlock(block.id, { taetigkeit: e.target.value })}
+                          value={block.taetigkeit.split("\n").filter(Boolean).filter(t => ![
+                            "Rasen mähen", "Rasenkantenschneiden", "Rasen düngen", "Rasen vertikutieren",
+                            "Rasen bewässern", "Rasen säen / Nachsaat", "Rollrasen verlegen",
+                            "Unkrautbekämpfung", "Heckenschneiden", "Baumschnitt / Baumpflege",
+                            "Laubrechen / Laubblasen", "Bepflanzung", "Böschungspflege",
+                            "Pflasterarbeiten", "Aufräumen / Reinigung", "Fahrt / Anfahrt", "Lager",
+                          ].includes(t)).join(", ")}
+                          onChange={(e) => {
+                            const predefined = block.taetigkeit.split("\n").filter(Boolean).filter(t => [
+                              "Rasen mähen", "Rasenkantenschneiden", "Rasen düngen", "Rasen vertikutieren",
+                              "Rasen bewässern", "Rasen säen / Nachsaat", "Rollrasen verlegen",
+                              "Unkrautbekämpfung", "Heckenschneiden", "Baumschnitt / Baumpflege",
+                              "Laubrechen / Laubblasen", "Bepflanzung", "Böschungspflege",
+                              "Pflasterarbeiten", "Aufräumen / Reinigung", "Fahrt / Anfahrt", "Lager",
+                            ].includes(t));
+                            const custom = e.target.value.trim() ? [e.target.value.trim()] : [];
+                            updateBlock(block.id, { taetigkeit: [...predefined, ...custom].join("\n") });
+                          }}
                           placeholder="Oder eigene Tätigkeit eingeben..."
                           className="h-10 rounded-xl text-sm"
                         />
+                        {block.taetigkeit.split("\n").filter(Boolean).length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {block.taetigkeit.split("\n").filter(Boolean).map((t, i) => (
+                              <Badge key={i} variant="secondary" className="text-xs">
+                                {t}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = block.taetigkeit.split("\n").filter(Boolean).filter((_, idx) => idx !== i);
+                                    updateBlock(block.id, { taetigkeit: updated.join("\n") });
+                                  }}
+                                  className="ml-1 hover:text-destructive"
+                                >
+                                  ×
+                                </button>
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
                       {/* Time inputs */}

@@ -1401,7 +1401,7 @@ export default function Admin() {
                           hours.toFixed(2),
                           entry.location_type || "",
                           entry.projects?.name || "",
-                          entry.taetigkeit || "",
+                          entry.taetigkeit ? entry.taetigkeit.split("\n").filter(Boolean).join(", ") : "",
                           entry.notizen || "",
                         ]);
                       });

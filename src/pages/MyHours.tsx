@@ -373,7 +373,7 @@ const MyHours = () => {
                           </div>
                         </TableCell>
                         <TableCell>{entry.projects?.name || '-'}</TableCell>
-                        <TableCell>{entry.taetigkeit}</TableCell>
+                        <TableCell>{entry.taetigkeit ? entry.taetigkeit.split("\n").filter(Boolean).join(", ") : ""}</TableCell>
                         <TableCell className="text-center">
                           {entry.start_time?.substring(0, 5) || '-'}
                         </TableCell>
