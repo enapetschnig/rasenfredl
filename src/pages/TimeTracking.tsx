@@ -26,6 +26,7 @@ import {
   calculateAutoLunchBreak,
 } from "@/lib/workingHours";
 import { FillRemainingHoursDialog } from "@/components/FillRemainingHoursDialog";
+import { useWorkTypes } from "@/hooks/useWorkTypes";
 
 type Project = {
   id: string;
@@ -81,6 +82,7 @@ const createDefaultBlock = (startTime = "", endTime = ""): TimeBlock => ({
 const TimeTracking = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
+  const workTypes = useWorkTypes();
   const [searchParams] = useSearchParams();
   const adminEditUserId = searchParams.get("user_id");
   const editMode = searchParams.get("edit") === "true";
@@ -1203,13 +1205,7 @@ const TimeTracking = () => {
                           </PopoverTrigger>
                           <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
                             <div className="max-h-60 overflow-y-auto p-1">
-                              {[
-                                "Rasen mähen", "Rasenkantenschneiden", "Rasen düngen", "Rasen vertikutieren",
-                                "Rasen bewässern", "Rasen säen / Nachsaat", "Rollrasen verlegen",
-                                "Unkrautbekämpfung", "Heckenschneiden", "Baumschnitt / Baumpflege",
-                                "Laubrechen / Laubblasen", "Bepflanzung", "Böschungspflege",
-                                "Pflasterarbeiten", "Aufräumen / Reinigung", "Fahrt / Anfahrt", "Lager",
-                              ].map((t) => {
+                              {workTypes.map((t) => {
                                 const selected = block.taetigkeit.split("\n").filter(Boolean).includes(t);
                                 return (
                                   <button

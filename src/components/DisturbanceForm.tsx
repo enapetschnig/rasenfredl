@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useWorkTypes } from "@/hooks/useWorkTypes";
 import { format } from "date-fns";
 
 type MaterialEntry = {
@@ -37,23 +38,9 @@ type DisturbanceFormProps = {
   } | null;
 };
 
-const WORK_TYPES = [
-  "Rasenmähen",
-  "Heckenschnitt",
-  "Strauchschnitt",
-  "Baumschnitt",
-  "Unkraut entfernen",
-  "Laubentfernung",
-  "Vertikutieren",
-  "Bodenbearbeitung",
-  "Pflanzarbeiten",
-  "Bewässerungsanlage",
-  "Neuanlage Rasen",
-  "Auskoffern",
-];
-
 export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: DisturbanceFormProps) => {
   const { toast } = useToast();
+  const WORK_TYPES = useWorkTypes();
   const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
 

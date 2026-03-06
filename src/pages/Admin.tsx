@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Shield, User as UserIcon, Send, Mail, Phone, MapPin, Shirt, FileText, Clock, Trash2, Settings, Save, Calendar } from "lucide-react";
+import { ArrowLeft, Shield, User as UserIcon, Send, Mail, Phone, MapPin, Shirt, FileText, Clock, Trash2, Settings, Save, Calendar, Plus, X } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -102,20 +102,27 @@ export default function Admin() {
   const [regiereportEmail, setRegiereportEmail] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
   const [loadingSettings, setLoadingSettings] = useState(true);
+  const [workTypes, setWorkTypes] = useState<string[]>([]);
+  const [newWorkType, setNewWorkType] = useState("");
+  const [savingWorkTypes, setSavingWorkTypes] = useState(false);
 
   const fetchAppSettings = useCallback(async () => {
     setLoadingSettings(true);
     try {
-      const { data, error } = await supabase
+      const { data: emailData } = await supabase
         .from("app_settings")
         .select("value")
         .eq("key", "disturbance_report_email")
         .maybeSingle();
+      if (emailData) setRegiereportEmail(emailData.value);
 
-      if (error) {
-        console.error("Error fetching app settings:", error);
-      } else if (data) {
-        setRegiereportEmail(data.value);
+      const { data: wtData } = await supabase
+        .from("app_settings")
+        .select("value")
+        .eq("key", "work_types")
+        .maybeSingle();
+      if (wtData?.value) {
+        try { setWorkTypes(JSON.parse(wtData.value)); } catch {}
       }
     } catch (err) {
       console.error("Error fetching app settings:", err);
@@ -159,6 +166,40 @@ export default function Admin() {
     } finally {
       setSavingSettings(false);
     }
+  };
+
+  const saveWorkTypes = async () => {
+    setSavingWorkTypes(true);
+    try {
+      const { error } = await supabase
+        .from("app_settings")
+        .upsert({
+          key: "work_types",
+          value: JSON.stringify(workTypes),
+          updated_at: new Date().toISOString(),
+        });
+      if (error) throw error;
+      toast({ title: "Gespeichert", description: "Tätigkeiten wurden aktualisiert." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Fehler", description: err.message || "Konnte nicht gespeichert werden." });
+    } finally {
+      setSavingWorkTypes(false);
+    }
+  };
+
+  const addWorkType = () => {
+    const trimmed = newWorkType.trim();
+    if (!trimmed) return;
+    if (workTypes.includes(trimmed)) {
+      toast({ variant: "destructive", title: "Existiert bereits", description: `"${trimmed}" ist bereits in der Liste.` });
+      return;
+    }
+    setWorkTypes([...workTypes, trimmed]);
+    setNewWorkType("");
+  };
+
+  const removeWorkType = (index: number) => {
+    setWorkTypes(workTypes.filter((_, i) => i !== index));
   };
 
   useEffect(() => {
@@ -949,6 +990,54 @@ export default function Admin() {
                   Diese E-Mail-Adresse erhält alle Regieberichte als Kopie.
                 </p>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card className="mt-4">
+            <CardHeader>
+              <CardTitle>Tätigkeiten verwalten</CardTitle>
+              <CardDescription>
+                Diese Liste wird im Regiebericht und in der Zeiterfassung als Auswahl angezeigt.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex gap-2">
+                <Input
+                  value={newWorkType}
+                  onChange={(e) => setNewWorkType(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addWorkType(); } }}
+                  placeholder="Neue Tätigkeit eingeben..."
+                  className="flex-1"
+                />
+                <Button type="button" onClick={addWorkType} variant="outline">
+                  <Plus className="h-4 w-4 mr-1" />
+                  Hinzufügen
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {workTypes.map((wt, index) => (
+                  <span
+                    key={index}
+                    className="inline-flex items-center gap-1 bg-muted text-sm font-medium px-3 py-1.5 rounded-lg"
+                  >
+                    {wt}
+                    <button
+                      type="button"
+                      onClick={() => removeWorkType(index)}
+                      className="hover:bg-destructive/20 hover:text-destructive rounded p-0.5 transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </span>
+                ))}
+                {workTypes.length === 0 && (
+                  <p className="text-sm text-muted-foreground">Keine Tätigkeiten definiert.</p>
+                )}
+              </div>
+              <Button onClick={saveWorkTypes} disabled={savingWorkTypes}>
+                <Save className="h-4 w-4 mr-2" />
+                {savingWorkTypes ? "Speichert..." : "Tätigkeiten speichern"}
+              </Button>
             </CardContent>
           </Card>
         </section>
