@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Clock, Building2, Hammer, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, Clock, Building2, Hammer, Pencil, Trash2, Palmtree } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -10,6 +10,10 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { calculateAutoLunchBreak } from "@/lib/workingHours";
+import { Badge } from "@/components/ui/badge";
+import { format } from "date-fns";
+import { de } from "date-fns/locale";
 
 type TimeEntry = {
   id: string;
@@ -38,10 +42,52 @@ const MyHours = () => {
   const [editingEntry, setEditingEntry] = useState<TimeEntry | null>(null);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [vacationTotal, setVacationTotal] = useState(25);
+  const [vacationUsed, setVacationUsed] = useState(0);
+  const [vacationDates, setVacationDates] = useState<string[]>([]);
 
   useEffect(() => {
     fetchEntries();
   }, [selectedMonth]);
+
+  useEffect(() => {
+    fetchVacationData();
+  }, []);
+
+  const fetchVacationData = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const currentYear = new Date().getFullYear();
+
+    // Fetch leave balance for current year
+    const { data: balanceData } = await supabase
+      .from("leave_balances")
+      .select("total_days")
+      .eq("user_id", user.id)
+      .eq("year", currentYear)
+      .single();
+
+    if (balanceData) {
+      setVacationTotal(balanceData.total_days);
+    }
+
+    // Fetch vacation days from time_entries
+    const { data: vacEntries } = await supabase
+      .from("time_entries")
+      .select("datum")
+      .eq("user_id", user.id)
+      .eq("taetigkeit", "Urlaub")
+      .gte("datum", `${currentYear}-01-01`)
+      .lte("datum", `${currentYear}-12-31`)
+      .order("datum");
+
+    if (vacEntries) {
+      const uniqueDates = [...new Set(vacEntries.map((e: any) => e.datum))];
+      setVacationDates(uniqueDates);
+      setVacationUsed(uniqueDates.length);
+    }
+  };
 
   const fetchEntries = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -114,30 +160,19 @@ const MyHours = () => {
 
     setSavingEdit(true);
 
-    // Berechne Stunden basierend auf Vormittag und Nachmittag
-    const morningStart = editingEntry.start_time ? new Date(`2000-01-01T${editingEntry.start_time}`) : null;
-    // Morning End: immer 12:00
-    const morningEndTime = "12:00";
-    const morningEnd = new Date(`2000-01-01T${morningEndTime}`);
-    
+    // Berechne Stunden aus Start/Endzeit mit automatischer Mittagspause
     let calculatedHours = 0;
-    
-    if (morningStart) {
-      // Vormittagsstunden
-      const morningMs = morningEnd.getTime() - morningStart.getTime();
-      const morningMinutes = morningMs / (1000 * 60);
-      calculatedHours += morningMinutes / 60;
-      
-      // Nachmittagsstunden (wenn vorhanden)
-      if (editingEntry.end_time) {
-        const afternoonEnd = new Date(`2000-01-01T${editingEntry.end_time}`);
-        const pauseMinutes = editingEntry.pause_minutes || 0;
-        const afternoonStartTime = new Date(morningEnd.getTime() + pauseMinutes * 60 * 1000);
-        const afternoonMs = afternoonEnd.getTime() - afternoonStartTime.getTime();
-        const afternoonMinutes = Math.max(0, afternoonMs / (1000 * 60));
-        calculatedHours += afternoonMinutes / 60;
-      }
+    if (editingEntry.start_time && editingEntry.end_time) {
+      const [startH, startM] = editingEntry.start_time.split(':').map(Number);
+      const [endH, endM] = editingEntry.end_time.split(':').map(Number);
+      const totalMinutes = (endH * 60 + endM) - (startH * 60 + startM);
+      const pauseMinutes = calculateAutoLunchBreak(editingEntry.start_time, editingEntry.end_time);
+      calculatedHours = Math.max(0, (totalMinutes - pauseMinutes) / 60);
     }
+
+    const pauseMinutes = editingEntry.start_time && editingEntry.end_time
+      ? calculateAutoLunchBreak(editingEntry.start_time, editingEntry.end_time)
+      : 0;
 
     const { error } = await supabase
       .from("time_entries")
@@ -145,9 +180,9 @@ const MyHours = () => {
         taetigkeit: editingEntry.taetigkeit,
         start_time: editingEntry.start_time,
         end_time: editingEntry.end_time,
-        pause_minutes: editingEntry.pause_minutes || 0,
+        pause_minutes: pauseMinutes,
         notizen: editingEntry.notizen,
-        stunden: Math.max(0, calculatedHours),
+        stunden: calculatedHours,
       })
       .eq("id", editingEntry.id);
 
@@ -216,7 +251,49 @@ const MyHours = () => {
         </div>
       </header>
 
-      <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-7xl">
+      <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-7xl space-y-4">
+        {/* Urlaubskonto */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Palmtree className="h-5 w-5" />
+              Urlaubskonto {new Date().getFullYear()}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-4">
+              <div className="flex-1 grid grid-cols-3 gap-3 text-center">
+                <div className="p-3 rounded-lg bg-muted/50">
+                  <p className="text-sm text-muted-foreground">Gesamt</p>
+                  <p className="text-2xl font-bold">{vacationTotal}</p>
+                </div>
+                <div className="p-3 rounded-lg bg-muted/50">
+                  <p className="text-sm text-muted-foreground">Verbraucht</p>
+                  <p className="text-2xl font-bold">{vacationUsed}</p>
+                </div>
+                <div className="p-3 rounded-lg bg-muted/50">
+                  <p className="text-sm text-muted-foreground">Übrig</p>
+                  <p className={`text-2xl font-bold ${vacationTotal - vacationUsed < 0 ? 'text-destructive' : vacationTotal - vacationUsed <= 5 ? 'text-orange-600' : 'text-green-600'}`}>
+                    {vacationTotal - vacationUsed}
+                  </p>
+                </div>
+              </div>
+            </div>
+            {vacationDates.length > 0 && (
+              <div>
+                <p className="text-sm text-muted-foreground mb-2">Urlaubstage:</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {vacationDates.map((d) => (
+                    <Badge key={d} variant="secondary" className="text-xs">
+                      {format(new Date(d + 'T00:00:00'), "dd.MM.", { locale: de })}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -285,7 +362,7 @@ const MyHours = () => {
                             {entry.location_type === 'werkstatt' ? (
                               <>
                                 <Hammer className="w-4 h-4 text-muted-foreground" />
-                                <span>Werkstatt</span>
+                                <span>Lager</span>
                               </>
                             ) : (
                               <>
@@ -322,8 +399,7 @@ const MyHours = () => {
                             size="sm"
                             variant="ghost"
                             onClick={() => {
-                              setEditingEntry(entry);
-                              setShowEditDialog(true);
+                              navigate(`/time-tracking?date=${entry.datum}&edit=true`);
                             }}
                             disabled={!isCurrentMonth(entry.datum)}
                             className="h-8"
@@ -410,56 +486,22 @@ const MyHours = () => {
                 </div>
               </div>
 
-              {/* Unterbrechung */}
+              {/* Endzeit */}
               <div className="space-y-3 p-4 rounded-lg border bg-muted/30">
-                <h3 className="font-semibold text-sm">Unterbrechung</h3>
+                <h3 className="font-semibold text-sm">Ende</h3>
                 <div>
-                  <Label htmlFor="edit-pause">Dauer (Minuten)</Label>
+                  <Label htmlFor="edit-end">Endzeit</Label>
                   <Input
-                    id="edit-pause"
-                    type="number"
-                    min="0"
-                    value={editingEntry.pause_minutes || 0}
-                    onChange={(e) => setEditingEntry({...editingEntry, pause_minutes: parseInt(e.target.value) || 0})}
+                    id="edit-end"
+                    type="time"
+                    value={editingEntry.end_time || ''}
+                    onChange={(e) => setEditingEntry({...editingEntry, end_time: e.target.value})}
                   />
                 </div>
-              </div>
-
-              {/* Nachmittag */}
-              <div className="space-y-3 p-4 rounded-lg border bg-muted/30">
-                <h3 className="font-semibold text-sm">Nachmittag</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="edit-afternoon-start">Beginn</Label>
-                    <Input
-                      id="edit-afternoon-start"
-                      type="time"
-                      value={(() => {
-                        const dayOfWeek = new Date(editingEntry.datum + 'T00:00:00').getDay();
-                        const isFriday = dayOfWeek === 5;
-                        const morningEnd = isFriday ? "12:30" : "12:00";
-                        const [hours, minutes] = morningEnd.split(':').map(Number);
-                        const pauseMinutes = editingEntry.pause_minutes || 0;
-                        const totalMinutes = hours * 60 + minutes + pauseMinutes;
-                        return `${String(Math.floor(totalMinutes / 60)).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`;
-                      })()}
-                      disabled
-                      className="bg-muted"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="edit-afternoon-end">Ende</Label>
-                    <Input
-                      id="edit-afternoon-end"
-                      type="time"
-                      value={editingEntry.end_time || ''}
-                      onChange={(e) => setEditingEntry({...editingEntry, end_time: e.target.value})}
-                    />
-                  </div>
-                </div>
-                {new Date(editingEntry.datum + 'T00:00:00').getDay() === 5 && (
+                {editingEntry.start_time && editingEntry.end_time &&
+                  calculateAutoLunchBreak(editingEntry.start_time, editingEntry.end_time) > 0 && (
                   <p className="text-xs text-muted-foreground">
-                    Freitags ist die Normalarbeitszeit 7:30-12:30 Uhr. Nachmittag nur bei Überstunden.
+                    Mittagspause 12:00–13:00 wird automatisch abgezogen (60 Min.)
                   </p>
                 )}
               </div>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { Clock, Plus, AlertTriangle, CheckCircle2, Calendar, Sun, Trash2, ChevronLeft, ChevronRight, Users, Check } from "lucide-react";
+import { useSearchParams, useNavigate } from "react-router-dom";
+import { Clock, Plus, AlertTriangle, CheckCircle2, Calendar, Sun, Trash2, ChevronLeft, ChevronRight, Users, Check, ArrowLeft, FileText, Pencil } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { format, startOfWeek } from "date-fns";
 import { de } from "date-fns/locale";
@@ -20,8 +21,10 @@ import {
   isNonWorkingDay,
   getWeeklyTargetHours,
   getTotalWorkingHours,
-  getAustrianHoliday
+  getAustrianHoliday,
+  calculateAutoLunchBreak,
 } from "@/lib/workingHours";
+import { FillRemainingHoursDialog } from "@/components/FillRemainingHoursDialog";
 
 type Project = {
   id: string;
@@ -37,8 +40,19 @@ type ExistingEntry = {
   stunden: number;
   taetigkeit: string;
   project_name: string | null;
+  project_id: string | null;
   plz: string | null;
   pause_start: string | null;
+  location_type: string | null;
+};
+
+type DayDisturbance = {
+  id: string;
+  start_time: string;
+  end_time: string;
+  stunden: number;
+  kunde_name: string;
+  beschreibung: string;
 };
 
 interface TimeBlock {
@@ -48,27 +62,31 @@ interface TimeBlock {
   taetigkeit: string;
   startTime: string;
   endTime: string;
-  pauseStart: string;
-  pauseEnd: string;
   selectedEmployees: string[];
   manualHours: string;
 }
 
-const createDefaultBlock = (startTime = "", endTime = "", pauseStart = "", pauseEnd = ""): TimeBlock => ({
+const createDefaultBlock = (startTime = "", endTime = ""): TimeBlock => ({
   id: crypto.randomUUID(),
   locationType: "baustelle",
   projectId: "",
   taetigkeit: "",
   startTime,
   endTime,
-  pauseStart,
-  pauseEnd,
   selectedEmployees: [],
   manualHours: "",
 });
 
 const TimeTracking = () => {
   const { toast } = useToast();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const adminEditUserId = searchParams.get("user_id");
+  const editMode = searchParams.get("edit") === "true";
+  const [adminEditUserName, setAdminEditUserName] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [editingEntryIds, setEditingEntryIds] = useState<string[]>([]);
+  const [editModeInitialized, setEditModeInitialized] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -81,10 +99,12 @@ const TimeTracking = () => {
   const [pendingBlockIdForNewProject, setPendingBlockIdForNewProject] = useState<string | null>(null);
 
   const [existingDayEntries, setExistingDayEntries] = useState<ExistingEntry[]>([]);
+  const [dayDisturbances, setDayDisturbances] = useState<DayDisturbance[]>([]);
   const [loadingDayEntries, setLoadingDayEntries] = useState(false);
   const [employees, setEmployees] = useState<{id: string, name: string}[]>([]);
   
   const [showAbsenceDialog, setShowAbsenceDialog] = useState(false);
+  const [showFillDialog, setShowFillDialog] = useState(false);
   
   const [absenceData, setAbsenceData] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -97,15 +117,15 @@ const TimeTracking = () => {
     absencePauseMinutes: "30",
   });
   
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(searchParams.get("date") || new Date().toISOString().split('T')[0]);
   const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([createDefaultBlock()]);
   const entryMode = "zeitraum" as const;
 
   // Fetch existing entries for selected date
   const fetchExistingDayEntries = async (date: string) => {
     setLoadingDayEntries(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
+    const userId = await getEffectiveUserId();
+    if (!userId) {
       setLoadingDayEntries(false);
       return;
     }
@@ -119,11 +139,23 @@ const TimeTracking = () => {
         stunden,
         taetigkeit,
         pause_start,
+        project_id,
+        location_type,
         projects (name, plz)
       `)
-      .eq("user_id", user.id)
+      .eq("user_id", userId)
       .eq("datum", date)
       .order("start_time");
+
+    // Also fetch disturbances (Regieberichte) for this day
+    const { data: distData } = await supabase
+      .from("disturbances")
+      .select("id, start_time, end_time, stunden, kunde_name, beschreibung")
+      .eq("user_id", userId)
+      .eq("datum", date)
+      .order("start_time");
+
+    setDayDisturbances(distData || []);
 
     if (!error && data) {
       const entries: ExistingEntry[] = data.map((entry: any) => ({
@@ -133,18 +165,28 @@ const TimeTracking = () => {
         stunden: entry.stunden,
         taetigkeit: entry.taetigkeit,
         project_name: entry.projects?.name || null,
+        project_id: entry.project_id || null,
         plz: entry.projects?.plz || null,
         pause_start: entry.pause_start || null,
+        location_type: entry.location_type || null,
       }));
       setExistingDayEntries(entries);
       
-      // If entries exist, suggest next time slot for first block
-      if (entries.length > 0 && !entries.some(e => ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(e.taetigkeit))) {
-        const lastEntry = entries[entries.length - 1];
-        const [lastEndHours, lastEndMinutes] = lastEntry.end_time.split(':').map(Number);
-        const nextStartMinutes = lastEndHours * 60 + lastEndMinutes + 30;
+      // Combine time entries and disturbances for latest end time
+      const allEndTimes = [
+        ...entries.map(e => e.end_time),
+        ...(distData || []).map((d: any) => d.end_time),
+      ];
+      const hasBookings = entries.length > 0 || (distData && distData.length > 0);
+
+      // If entries or disturbances exist, suggest next time slot for first block
+      if (hasBookings && !entries.some(e => ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(e.taetigkeit))) {
+        // Find latest end time across all bookings
+        const latestEnd = allEndTimes.sort().reverse()[0];
+        const [lastEndHours, lastEndMinutes] = latestEnd.split(':').map(Number);
+        const nextStartMinutes = lastEndHours * 60 + lastEndMinutes;
         const suggestedStart = `${String(Math.floor(nextStartMinutes / 60)).padStart(2, '0')}:${String(nextStartMinutes % 60).padStart(2, '0')}`;
-        
+
         setTimeBlocks([createDefaultBlock(suggestedStart)]);
       } else if (!entries.some(e => ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(e.taetigkeit))) {
         // No entries yet: check for public holiday first
@@ -169,7 +211,7 @@ const TimeTracking = () => {
           // Auto-fill default work times for the selected date
           const defaults = getDefaultWorkTimes(dateObj);
           if (defaults) {
-            setTimeBlocks([createDefaultBlock(defaults.startTime, defaults.endTime, defaults.pauseStart, defaults.pauseEnd)]);
+            setTimeBlocks([createDefaultBlock(defaults.startTime, defaults.endTime)]);
           } else {
             setTimeBlocks([createDefaultBlock()]);
           }
@@ -184,8 +226,55 @@ const TimeTracking = () => {
 
   // Load existing entries when date changes
   useEffect(() => {
+    // Reset edit mode state when navigating to a different day
+    setEditingEntryIds([]);
+    setEditModeInitialized(false);
     fetchExistingDayEntries(selectedDate);
   }, [selectedDate]);
+
+  // In edit mode: auto-load all existing entries as editable blocks
+  useEffect(() => {
+    if (editMode && !editModeInitialized && existingDayEntries.length > 0) {
+      const blocks: TimeBlock[] = existingDayEntries.map(entry => ({
+        id: crypto.randomUUID(),
+        locationType: (entry.location_type as "baustelle" | "werkstatt") || "baustelle",
+        projectId: entry.project_id || "",
+        taetigkeit: entry.taetigkeit || "",
+        startTime: entry.start_time.substring(0, 5),
+        endTime: entry.end_time.substring(0, 5),
+        selectedEmployees: [],
+        manualHours: "",
+      }));
+      setTimeBlocks(blocks);
+      setEditingEntryIds(existingDayEntries.map(e => e.id));
+      setEditModeInitialized(true);
+    }
+  }, [editMode, editModeInitialized, existingDayEntries]);
+
+  // Check admin status and load target user name for admin editing
+  useEffect(() => {
+    const checkAdmin = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase.from("user_roles").select("role").eq("user_id", user.id).single();
+      const admin = data?.role === "administrator";
+      setIsAdmin(admin);
+
+      if (admin && adminEditUserId) {
+        const { data: profile } = await supabase.from("profiles").select("vorname, nachname").eq("id", adminEditUserId).single();
+        if (profile) setAdminEditUserName(`${profile.vorname} ${profile.nachname}`);
+      }
+    };
+    checkAdmin();
+  }, [adminEditUserId]);
+
+  // The effective user ID for data operations (admin editing or own)
+  const getEffectiveUserId = async (): Promise<string | null> => {
+    // If URL has user_id param, always use it (admin context)
+    if (adminEditUserId) return adminEditUserId;
+    const { data: { user } } = await supabase.auth.getUser();
+    return user?.id || null;
+  };
 
   useEffect(() => {
     const fetchEmployees = async () => {
@@ -314,25 +403,20 @@ const TimeTracking = () => {
     ));
   };
 
-  // Calculate pause minutes for a block
+  // Calculate pause minutes for a block (automatic lunch break 12:00-13:00)
   const calculateBlockPauseMinutes = (block: TimeBlock): number => {
-    if (!block.pauseStart || !block.pauseEnd) return 0;
-    
-    const [pauseStartH, pauseStartM] = block.pauseStart.split(':').map(Number);
-    const [pauseEndH, pauseEndM] = block.pauseEnd.split(':').map(Number);
-    
-    const pauseMinutes = (pauseEndH * 60 + pauseEndM) - (pauseStartH * 60 + pauseStartM);
-    return Math.max(0, pauseMinutes);
+    if (!block.startTime || !block.endTime) return 0;
+    return calculateAutoLunchBreak(block.startTime, block.endTime);
   };
 
   // Calculate hours for a single block
   const calculateBlockHours = (block: TimeBlock): number => {
     if (!block.startTime || !block.endTime) return 0;
-    
+
     const [startH, startM] = block.startTime.split(':').map(Number);
     const [endH, endM] = block.endTime.split(':').map(Number);
     const pauseMinutes = calculateBlockPauseMinutes(block);
-    
+
     const totalMinutes = (endH * 60 + endM) - (startH * 60 + startM) - pauseMinutes;
     return Math.max(0, totalMinutes / 60);
   };
@@ -361,19 +445,18 @@ const TimeTracking = () => {
       updateBlock(timeBlocks[0].id, {
         startTime: defaultTimes.startTime,
         endTime: defaultTimes.endTime,
-        pauseStart: defaultTimes.pauseStart,
-        pauseEnd: defaultTimes.pauseEnd,
       });
     }
   };
 
   const handleAbsenceSubmit = async () => {
     if (submittingAbsence) return;
-    
+
     setSubmittingAbsence(true);
 
+    const effectiveUserId = await getEffectiveUserId();
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
+    if (!user || !effectiveUserId) {
       toast({ variant: "destructive", title: "Fehler", description: "Sie müssen angemeldet sein" });
       setSubmittingAbsence(false);
       return;
@@ -382,7 +465,7 @@ const TimeTracking = () => {
     const { count: existingCount } = await supabase
       .from("time_entries")
       .select("id", { count: "exact", head: true })
-      .eq("user_id", user.id)
+      .eq("user_id", effectiveUserId)
       .eq("datum", absenceData.date);
 
     if ((existingCount ?? 0) > 0) {
@@ -442,7 +525,7 @@ const TimeTracking = () => {
       const { data: timeAccount, error: taError } = await supabase
         .from("time_accounts")
         .select("id, balance_hours")
-        .eq("user_id", user.id)
+        .eq("user_id", effectiveUserId)
         .maybeSingle();
 
       if (taError || !timeAccount) {
@@ -472,7 +555,7 @@ const TimeTracking = () => {
       }
 
       await supabase.from("time_account_transactions").insert({
-        user_id: user.id,
+        user_id: effectiveUserId,
         changed_by: user.id,
         change_type: "za_abzug",
         hours: -workingHours,
@@ -485,7 +568,7 @@ const TimeTracking = () => {
     const absenceLabel = absenceData.type === "urlaub" ? "Urlaub" : absenceData.type === "krankenstand" ? "Krankenstand" : absenceData.type === "weiterbildung" ? "Weiterbildung" : absenceData.type === "za" ? "Zeitausgleich" : "Feiertag";
 
     const { error } = await supabase.from("time_entries").insert({
-      user_id: user.id,
+      user_id: effectiveUserId,
       datum: absenceData.date,
       project_id: null,
       taetigkeit: absenceLabel,
@@ -522,8 +605,9 @@ const TimeTracking = () => {
     e.preventDefault();
     setSaving(true);
 
+    const effectiveUserId = await getEffectiveUserId();
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
+    if (!user || !effectiveUserId) {
       toast({ variant: "destructive", title: "Fehler", description: "Sie müssen angemeldet sein" });
       setSaving(false);
       return;
@@ -579,15 +663,17 @@ const TimeTracking = () => {
       }
     }
 
-    // Check for overlaps with existing entries
+    // Check for overlaps with existing entries (excluding entries being edited)
     const { data: existingEntries } = await supabase
       .from("time_entries")
       .select("id, start_time, end_time, taetigkeit")
-      .eq("user_id", user.id)
+      .eq("user_id", effectiveUserId)
       .eq("datum", selectedDate);
 
-    if (existingEntries && existingEntries.length > 0) {
-      for (const entry of existingEntries) {
+    const entriesToCheck = (existingEntries || []).filter(e => !editingEntryIds.includes(e.id));
+
+    if (entriesToCheck.length > 0) {
+      for (const entry of entriesToCheck) {
         if (["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(entry.taetigkeit)) {
           toast({ 
             variant: "destructive", 
@@ -619,6 +705,18 @@ const TimeTracking = () => {
       }
     }
 
+    // In edit mode: delete original entries now (after all validation passed)
+    if (editingEntryIds.length > 0) {
+      for (const id of editingEntryIds) {
+        await supabase
+          .from("time_entries")
+          .delete()
+          .eq("id", id)
+          .eq("user_id", effectiveUserId);
+      }
+      setEditingEntryIds([]);
+    }
+
     // Insert all blocks with team members via Edge Function
     let totalEntriesCreated = 0;
     let hasError = false;
@@ -627,7 +725,7 @@ const TimeTracking = () => {
       const blockHours = calculateBlockHours(block);
       const pauseMinutes = calculateBlockPauseMinutes(block);
       const entryData = {
-        user_id: user.id,
+        user_id: effectiveUserId,
         datum: selectedDate,
         project_id: block.locationType === "werkstatt" ? null : (block.projectId || null),
         taetigkeit: block.taetigkeit || null,
@@ -635,8 +733,8 @@ const TimeTracking = () => {
         start_time: block.startTime,
         end_time: block.endTime,
         pause_minutes: pauseMinutes,
-        pause_start: block.pauseStart || null,
-        pause_end: block.pauseEnd || null,
+        pause_start: pauseMinutes > 0 ? "12:00" : null,
+        pause_end: pauseMinutes > 0 ? "13:00" : null,
         location_type: block.locationType,
         notizen: null,
         week_type: null,
@@ -669,8 +767,8 @@ const TimeTracking = () => {
           start_time: block.startTime,
           end_time: block.endTime,
           pause_minutes: pauseMinutes,
-          pause_start: block.pauseStart || null,
-          pause_end: block.pauseEnd || null,
+          pause_start: pauseMinutes > 0 ? "12:00" : null,
+          pause_end: pauseMinutes > 0 ? "13:00" : null,
           location_type: block.locationType,
           notizen: null,
           week_type: null,
@@ -694,12 +792,65 @@ const TimeTracking = () => {
         ? ` (inkl. Team-Mitglieder)`
         : "";
       toast({ title: "Erfolg", description: `${totalEntriesCreated} Eintrag/Einträge gespeichert${teamInfo}` });
+
+      // If admin is editing for another user, navigate back to hours report
+      if (isAdmin && adminEditUserId) {
+        const returnMonth = searchParams.get("return_month");
+        const returnYear = searchParams.get("return_year");
+        const params = new URLSearchParams();
+        if (adminEditUserId) params.set("employee", adminEditUserId);
+        if (returnMonth) params.set("month", returnMonth);
+        if (returnYear) params.set("year", returnYear);
+        navigate(`/hours-report?${params.toString()}`);
+        setSaving(false);
+        return;
+      }
+
       await fetchExistingDayEntries(selectedDate);
     }
     setSaving(false);
   };
 
-  const isDayBlocked = existingDayEntries.some(e => ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(e.taetigkeit));
+  const handleDeleteExistingEntry = async (entryId: string, prefillBlock?: boolean) => {
+    // Find entry data before deleting (for prefill)
+    const entry = existingDayEntries.find(e => e.id === entryId);
+    const userId = await getEffectiveUserId();
+
+    const { error } = await supabase
+      .from("time_entries")
+      .delete()
+      .eq("id", entryId)
+      .eq("user_id", userId || "");
+
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: error.message });
+      return;
+    }
+
+    if (prefillBlock && entry) {
+      // Pre-fill a new block with the deleted entry's data
+      const newBlock: TimeBlock = {
+        id: crypto.randomUUID(),
+        locationType: (entry.location_type as "baustelle" | "werkstatt") || "baustelle",
+        projectId: entry.project_id || "",
+        taetigkeit: entry.taetigkeit || "",
+        startTime: entry.start_time.substring(0, 5),
+        endTime: entry.end_time.substring(0, 5),
+        selectedEmployees: [],
+        manualHours: "",
+      };
+      setTimeBlocks([newBlock]);
+      toast({ title: "Eintrag wird bearbeitet", description: "Passen Sie die Daten an und speichern Sie erneut." });
+    } else {
+      toast({ title: "Eintrag gelöscht" });
+    }
+
+    await fetchExistingDayEntries(selectedDate);
+  };
+
+  // Filter out entries currently being edited
+  const visibleDayEntries = existingDayEntries.filter(e => !editingEntryIds.includes(e.id));
+  const isDayBlocked = visibleDayEntries.some(e => ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(e.taetigkeit));
 
   const navigateDay = (direction: -1 | 1) => {
     const current = new Date(selectedDate + 'T00:00:00');
@@ -720,7 +871,34 @@ const TimeTracking = () => {
     <div className="min-h-screen bg-background">
       <PageHeader title="Zeiterfassung" />
 
-      <div className="max-w-2xl mx-auto pb-28">
+      <div className="max-w-2xl mx-auto pb-32">
+
+        {/* Admin editing banner */}
+        {isAdmin && adminEditUserId && adminEditUserName && (
+          <div className="mx-4 mt-3 mb-0 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 rounded-lg px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-amber-600" />
+              <span className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                Bearbeitung für: <strong>{adminEditUserName}</strong>
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                const returnMonth = searchParams.get("return_month");
+                const returnYear = searchParams.get("return_year");
+                const params = new URLSearchParams();
+                if (adminEditUserId) params.set("employee", adminEditUserId);
+                if (returnMonth) params.set("month", returnMonth);
+                if (returnYear) params.set("year", returnYear);
+                navigate(`/hours-report?${params.toString()}`);
+              }}
+              className="text-sm text-amber-700 dark:text-amber-300 underline hover:no-underline flex items-center gap-1"
+            >
+              <ArrowLeft className="w-3 h-3" />
+              Zurück
+            </button>
+          </div>
+        )}
 
         {/* Date navigation bar */}
         <div className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b px-4 py-3">
@@ -734,22 +912,23 @@ const TimeTracking = () => {
             >
               <ChevronLeft className="h-5 w-5" />
             </Button>
-            <div className="flex-1 text-center">
+            <div className="flex-1 text-center relative">
               <input
                 type="date"
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
-                className="sr-only"
-                id="date-hidden"
+                className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                style={{ fontSize: '16px' }}
+                id="date-picker"
               />
-              <label htmlFor="date-hidden" className="cursor-pointer block">
+              <div className="pointer-events-none select-none py-1">
                 <p className="font-semibold text-sm leading-tight">
                   {format(new Date(selectedDate + 'T00:00:00'), "EEEE", { locale: de })}
                 </p>
                 <p className="text-lg font-bold leading-tight">
                   {format(new Date(selectedDate + 'T00:00:00'), "dd. MMMM yyyy", { locale: de })}
                 </p>
-              </label>
+              </div>
             </div>
             <Button
               type="button"
@@ -782,50 +961,102 @@ const TimeTracking = () => {
               <span>Mo–Do: 8,5h • Fr: 5h</span>
             </div>
 
-            {/* Existing entries */}
+            {/* Existing entries + Regieberichte */}
             {loadingDayEntries ? (
               <div className="bg-muted/50 rounded-xl p-3 text-sm text-muted-foreground flex items-center gap-2">
                 <Calendar className="w-4 h-4 animate-pulse" />
                 Lade Tageseinträge...
               </div>
-            ) : existingDayEntries.length > 0 ? (
-              <div className={`rounded-xl p-4 space-y-3 ${
-                isDayBlocked
-                  ? "bg-destructive/10 border border-destructive/30"
-                  : "bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800"
-              }`}>
-                <div className="flex items-center gap-2 font-semibold text-sm">
-                  {isDayBlocked ? (
-                    <>
-                      <AlertTriangle className="w-4 h-4 text-destructive" />
-                      <span className="text-destructive">Tag blockiert — {existingDayEntries[0].taetigkeit}</span>
-                    </>
-                  ) : (
-                    <>
-                      <Calendar className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                      <span className="text-amber-700 dark:text-amber-300">Bereits gebuchte Zeiten</span>
-                    </>
-                  )}
-                </div>
-                {!isDayBlocked && (
-                  <div className="space-y-2">
-                    {existingDayEntries.map((entry) => (
-                      <div key={entry.id} className="flex items-center justify-between text-sm bg-background/70 rounded-lg px-3 py-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="font-mono text-xs bg-muted px-2 py-0.5 rounded shrink-0">
-                            {entry.start_time.substring(0, 5)}–{entry.end_time.substring(0, 5)}
-                          </span>
-                          <span className="truncate text-muted-foreground">
-                            {entry.project_name || entry.taetigkeit || "—"}
-                          </span>
-                        </div>
-                        <span className="font-bold shrink-0 ml-2">{Number(entry.stunden).toFixed(1)}h</span>
-                      </div>
-                    ))}
-                    <div className="flex items-center justify-between pt-1 border-t border-amber-200 dark:border-amber-700 text-sm font-semibold">
-                      <span>Tagessumme</span>
-                      <span>{existingDayEntries.reduce((s, e) => s + Number(e.stunden), 0).toFixed(2)} h</span>
+            ) : (visibleDayEntries.length > 0 || dayDisturbances.length > 0) ? (
+              <div className="space-y-3">
+                {/* Disturbances (Regieberichte) */}
+                {dayDisturbances.length > 0 && (
+                  <div className="rounded-xl p-4 space-y-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+                    <div className="flex items-center gap-2 font-semibold text-sm">
+                      <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                      <span className="text-emerald-700 dark:text-emerald-300">Regieberichte</span>
                     </div>
+                    <div className="space-y-2">
+                      {dayDisturbances.map((dist) => (
+                        <div key={dist.id} className="flex items-center justify-between text-sm bg-background/70 rounded-lg px-3 py-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-mono text-xs bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded shrink-0">
+                              {dist.start_time.substring(0, 5)}–{dist.end_time.substring(0, 5)}
+                            </span>
+                            <span className="truncate text-muted-foreground">
+                              {dist.kunde_name}
+                            </span>
+                          </div>
+                          <span className="font-bold shrink-0 ml-2">{Number(dist.stunden).toFixed(1)}h</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Time entries */}
+                {visibleDayEntries.length > 0 && (
+                  <div className={`rounded-xl p-4 space-y-3 ${
+                    isDayBlocked
+                      ? "bg-destructive/10 border border-destructive/30"
+                      : "bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800"
+                  }`}>
+                    <div className="flex items-center gap-2 font-semibold text-sm">
+                      {isDayBlocked ? (
+                        <>
+                          <AlertTriangle className="w-4 h-4 text-destructive" />
+                          <span className="text-destructive">Tag blockiert — {visibleDayEntries[0].taetigkeit}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Calendar className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                          <span className="text-amber-700 dark:text-amber-300">Bereits gebuchte Zeiten</span>
+                        </>
+                      )}
+                    </div>
+                    {!isDayBlocked && (
+                      <div className="space-y-2">
+                        {visibleDayEntries.map((entry) => (
+                          <div key={entry.id} className="flex items-center justify-between text-sm bg-background/70 rounded-lg px-3 py-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="font-mono text-xs bg-muted px-2 py-0.5 rounded shrink-0">
+                                {entry.start_time.substring(0, 5)}–{entry.end_time.substring(0, 5)}
+                              </span>
+                              <span className="truncate text-muted-foreground">
+                                {entry.project_name || entry.taetigkeit || "—"}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-0.5 shrink-0 ml-2">
+                              <span className="font-bold mr-1">{Number(entry.stunden).toFixed(1)}h</span>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteExistingEntry(entry.id, true)}
+                                className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                                title="Eintrag bearbeiten"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteExistingEntry(entry.id)}
+                                className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                                title="Eintrag löschen"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Total for the day */}
+                {!isDayBlocked && (
+                  <div className="flex items-center justify-between px-2 text-sm font-semibold">
+                    <span>Tagessumme</span>
+                    <span>{(visibleDayEntries.reduce((s, e) => s + Number(e.stunden), 0) + dayDisturbances.reduce((s, d) => s + Number(d.stunden), 0)).toFixed(2)} h</span>
                   </div>
                 )}
               </div>
@@ -841,11 +1072,27 @@ const TimeTracking = () => {
               type="button"
               variant="outline"
               className="w-full gap-2 h-11"
-              onClick={() => setShowAbsenceDialog(true)}
+              onClick={() => {
+                setAbsenceData(prev => ({ ...prev, date: selectedDate }));
+                setShowAbsenceDialog(true);
+              }}
             >
               <Calendar className="h-4 w-4" />
               Abwesenheit erfassen
             </Button>
+
+            {/* Fill remaining hours button - show when entries or disturbances exist but day isn't full */}
+            {!isDayBlocked && (visibleDayEntries.length > 0 || dayDisturbances.length > 0) && (
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full gap-2 h-11"
+                onClick={() => setShowFillDialog(true)}
+              >
+                <Clock className="h-4 w-4" />
+                Reststunden auffüllen
+              </Button>
+            )}
 
             {/* Time Blocks */}
             {!isDayBlocked && (
@@ -902,7 +1149,7 @@ const TimeTracking = () => {
                             htmlFor={`werkstatt-${block.id}`}
                             className="flex h-12 cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-muted bg-background hover:bg-accent peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/5 peer-data-[state=checked]:text-primary font-medium text-sm transition-all"
                           >
-                            🔧 Werkstatt
+                            🔧 Lager
                           </Label>
                         </div>
                       </RadioGroup>
@@ -934,34 +1181,38 @@ const TimeTracking = () => {
                         </Select>
                       )}
 
-                      {/* Activity */}
-                      <Input
-                        value={block.taetigkeit}
-                        onChange={(e) => updateBlock(block.id, { taetigkeit: e.target.value })}
-                        placeholder="✏️ Tätigkeit (optional)"
-                        list={`taetigkeit-list-${block.id}`}
-                        className="h-12 rounded-xl"
-                      />
-                      <datalist id={`taetigkeit-list-${block.id}`}>
-                        <option value="Rasen mähen" />
-                        <option value="Rasenkantenschneiden" />
-                        <option value="Rasen düngen" />
-                        <option value="Rasen vertikutieren" />
-                        <option value="Rasen bewässern" />
-                        <option value="Rasen säen / Nachsaat" />
-                        <option value="Rollrasen verlegen" />
-                        <option value="Unkrautbekämpfung" />
-                        <option value="Heckenschneiden" />
-                        <option value="Baumschnitt / Baumpflege" />
-                        <option value="Laubrechen / Laubblasen" />
-                        <option value="Bepflanzung" />
-                        <option value="Böschungspflege" />
-                        <option value="Pflasterarbeiten" />
-                        <option value="Aufräumen / Reinigung" />
-                        <option value="Fahrt / Anfahrt" />
-                        <option value="Werkstatt" />
-                        <option value="Sonstiges" />
-                      </datalist>
+                      {/* Activity - tappable chips */}
+                      <div className="space-y-2">
+                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tätigkeit (optional)</Label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {[
+                            "Rasen mähen", "Rasenkantenschneiden", "Rasen düngen", "Rasen vertikutieren",
+                            "Rasen bewässern", "Rasen säen / Nachsaat", "Rollrasen verlegen",
+                            "Unkrautbekämpfung", "Heckenschneiden", "Baumschnitt / Baumpflege",
+                            "Laubrechen / Laubblasen", "Bepflanzung", "Böschungspflege",
+                            "Pflasterarbeiten", "Aufräumen / Reinigung", "Fahrt / Anfahrt", "Lager",
+                          ].map((t) => (
+                            <button
+                              key={t}
+                              type="button"
+                              onClick={() => updateBlock(block.id, { taetigkeit: block.taetigkeit === t ? "" : t })}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                                block.taetigkeit === t
+                                  ? "bg-primary text-primary-foreground border-primary"
+                                  : "bg-muted/50 text-foreground border-muted hover:bg-muted"
+                              }`}
+                            >
+                              {t}
+                            </button>
+                          ))}
+                        </div>
+                        <Input
+                          value={block.taetigkeit}
+                          onChange={(e) => updateBlock(block.id, { taetigkeit: e.target.value })}
+                          placeholder="Oder eigene Tätigkeit eingeben..."
+                          className="h-10 rounded-xl text-sm"
+                        />
+                      </div>
 
                       {/* Time inputs */}
                       <div className="space-y-3">
@@ -987,26 +1238,12 @@ const TimeTracking = () => {
                             />
                           </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1.5">
-                            <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pause von</Label>
-                            <Input
-                              type="time"
-                              value={block.pauseStart}
-                              onChange={(e) => updateBlock(block.id, { pauseStart: e.target.value })}
-                              className="h-11 rounded-xl text-center"
-                            />
+                        {/* Automatische Mittagspause-Anzeige */}
+                        {calculateBlockPauseMinutes(block) > 0 && (
+                          <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2 text-center">
+                            Mittagspause 12:00–13:00 wird automatisch abgezogen (60 Min.)
                           </div>
-                          <div className="space-y-1.5">
-                            <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pause bis</Label>
-                            <Input
-                              type="time"
-                              value={block.pauseEnd}
-                              onChange={(e) => updateBlock(block.id, { pauseEnd: e.target.value })}
-                              className="h-11 rounded-xl text-center"
-                            />
-                          </div>
-                        </div>
+                        )}
                       </div>
 
                       {/* Regelarbeitszeit shortcut */}
@@ -1019,8 +1256,6 @@ const TimeTracking = () => {
                           if (defaults) updateBlock(block.id, {
                             startTime: defaults.startTime,
                             endTime: defaults.endTime,
-                            pauseStart: defaults.pauseStart,
-                            pauseEnd: defaults.pauseEnd,
                           });
                         }}
                         className="w-full h-10 rounded-xl text-xs gap-1.5"
@@ -1029,40 +1264,7 @@ const TimeTracking = () => {
                         Regelarbeitszeit übernehmen
                       </Button>
 
-                      {/* Employee selection */}
-                      {employees.length > 0 && (
-                        <div className="space-y-2">
-                          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
-                            <Users className="w-3.5 h-3.5" />
-                            Mitarbeiter mitbuchen
-                          </Label>
-                          <div className="flex flex-wrap gap-2">
-                            {employees.map((emp) => {
-                              const selected = block.selectedEmployees.includes(emp.id);
-                              return (
-                                <button
-                                  key={emp.id}
-                                  type="button"
-                                  onClick={() => toggleEmployee(block.id, emp.id, block.selectedEmployees)}
-                                  className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border-2 transition-all ${
-                                    selected
-                                      ? "border-primary bg-primary/10 text-primary"
-                                      : "border-muted bg-background text-muted-foreground hover:border-primary/40"
-                                  }`}
-                                >
-                                  {selected && <Check className="w-3.5 h-3.5" />}
-                                  {emp.name}
-                                </button>
-                              );
-                            })}
-                          </div>
-                          {block.selectedEmployees.length > 0 && (
-                            <p className="text-xs text-primary font-medium">
-                              {block.selectedEmployees.length} Mitarbeiter werden mitgebucht
-                            </p>
-                          )}
-                        </div>
-                      )}
+                      {/* Employee co-booking hidden by request */}
                     </div>
                   </div>
                 ))}
@@ -1094,12 +1296,12 @@ const TimeTracking = () => {
 
       {/* Sticky submit button */}
       {!isDayBlocked && (
-        <div className="fixed bottom-0 left-0 right-0 p-4 bg-background/95 backdrop-blur-sm border-t safe-area-bottom">
+        <div className="fixed bottom-0 left-0 right-0 bg-background/95 backdrop-blur-sm border-t" style={{ padding: '16px 16px calc(16px + env(safe-area-inset-bottom, 0px))' }}>
           <div className="max-w-2xl mx-auto">
             <Button
               type="button"
               onClick={(e) => handleSubmit(e as any)}
-              className="w-full h-14 text-base font-bold rounded-2xl shadow-lg"
+              className="w-full h-14 text-base font-bold rounded-2xl shadow-lg active:scale-[0.98] transition-transform"
               disabled={saving}
             >
               {saving ? (
@@ -1151,6 +1353,63 @@ const TimeTracking = () => {
           </DialogContent>
         </Dialog>
 
+        {/* Fill Remaining Hours Dialog */}
+        <FillRemainingHoursDialog
+          open={showFillDialog}
+          onOpenChange={setShowFillDialog}
+          remainingHours={(() => {
+            const dateObj = new Date(selectedDate + 'T00:00:00');
+            const target = getNormalWorkingHours(dateObj);
+            const booked = visibleDayEntries.reduce((s, e) => s + Number(e.stunden), 0) + dayDisturbances.reduce((s, d) => s + Number(d.stunden), 0);
+            return Math.max(0, target - booked);
+          })()}
+          bookedHours={visibleDayEntries.reduce((s, e) => s + Number(e.stunden), 0) + dayDisturbances.reduce((s, d) => s + Number(d.stunden), 0)}
+          targetHours={getNormalWorkingHours(new Date(selectedDate + 'T00:00:00'))}
+          projects={projects}
+          existingEntries={[
+            ...visibleDayEntries.map(e => ({
+              start_time: e.start_time,
+              end_time: e.end_time,
+            })),
+            ...dayDisturbances.map(d => ({
+              start_time: d.start_time,
+              end_time: d.end_time,
+            })),
+          ]}
+          selectedDate={selectedDate}
+          onSubmit={async (blocks) => {
+            const userId = await getEffectiveUserId();
+            if (!userId) return;
+
+            for (const block of blocks) {
+              const pauseMinutes = calculateAutoLunchBreak(block.startTime, block.endTime);
+              const [sH, sM] = block.startTime.split(':').map(Number);
+              const [eH, eM] = block.endTime.split(':').map(Number);
+              const totalMin = (eH * 60 + eM) - (sH * 60 + sM) - pauseMinutes;
+              const stunden = Math.max(0, totalMin / 60);
+
+              await supabase.from("time_entries").insert({
+                user_id: userId,
+                datum: selectedDate,
+                project_id: block.projectId,
+                taetigkeit: block.description || null,
+                stunden,
+                start_time: block.startTime,
+                end_time: block.endTime,
+                pause_minutes: pauseMinutes,
+                pause_start: pauseMinutes > 0 ? "12:00" : null,
+                pause_end: pauseMinutes > 0 ? "13:00" : null,
+                location_type: block.locationType,
+                notizen: null,
+                week_type: null,
+              });
+            }
+
+            toast({ title: "Erfolg", description: `${blocks.length} Restblock${blocks.length !== 1 ? 'e' : ''} gebucht` });
+            await fetchExistingDayEntries(selectedDate);
+          }}
+        />
+
         {/* Absence Dialog */}
         <Dialog open={showAbsenceDialog} onOpenChange={setShowAbsenceDialog}>
           <DialogContent>
@@ -1174,7 +1433,7 @@ const TimeTracking = () => {
                 <RadioGroup 
                   value={absenceData.type} 
                   onValueChange={(value: "urlaub" | "krankenstand" | "weiterbildung" | "feiertag" | "za") => setAbsenceData({ ...absenceData, type: value })}
-                  className="grid grid-cols-3 gap-2 mt-2"
+                  className="grid grid-cols-3 sm:grid-cols-5 gap-2 mt-2"
                 >
                   <div>
                     <RadioGroupItem value="urlaub" id="urlaub" className="peer sr-only" />
@@ -1258,8 +1517,8 @@ const TimeTracking = () => {
                       const absenceDateObj = new Date(absenceData.date + 'T00:00:00');
                       const dayOfWeek = absenceDateObj.getDay();
                       if (dayOfWeek === 0 || dayOfWeek === 6) return "Wochenende: 0 Stunden";
-                      if (dayOfWeek === 5) return "Freitag: 4,5 Stunden (07:00 - 12:00)";
-                      return "Mo-Do: 8,5 Stunden (07:00 - 16:00, 30min Pause)";
+                      if (dayOfWeek === 5) return "Freitag: 5 Stunden (07:00 - 12:00)";
+                      return "Mo-Do: 8,5 Stunden (07:00 - 16:30, 60min Pause)";
                     })()}
                   </div>
                   <div className="pt-2 border-t">

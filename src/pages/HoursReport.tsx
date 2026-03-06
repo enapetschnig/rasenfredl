@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "@/hooks/use-toast";
-import { ArrowLeft, Download, FileSpreadsheet, Building2, Hammer, ChevronDown } from "lucide-react";
+import { ArrowLeft, Download, FileSpreadsheet, Building2, Hammer, ChevronDown, Pencil } from "lucide-react";
 import { format, isSameDay, parseISO } from "date-fns";
 import { de } from "date-fns/locale";
 import * as XLSX from "xlsx-js-style";
@@ -20,7 +20,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { getNormalWorkingHours } from "@/lib/workingHours";
+import { getNormalWorkingHours, calculateAutoLunchBreak, calculateHoursWithAutoLunch } from "@/lib/workingHours";
 
 interface TimeEntry {
   id: string;
@@ -81,6 +81,14 @@ export default function HoursReport() {
       fetchTimeEntries();
     }
   }, [month, year, selectedUserId]);
+
+  // Restore filters from URL params (when returning from edit)
+  useEffect(() => {
+    const monthParam = searchParams.get("month");
+    const yearParam = searchParams.get("year");
+    if (monthParam) setMonth(parseInt(monthParam));
+    if (yearParam) setYear(parseInt(yearParam));
+  }, []);
 
   const checkAdminStatus = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -175,34 +183,46 @@ export default function HoursReport() {
     return Math.max(0, totalHours - normalHours);
   };
 
+  // Calculate actual hours from start/end time using auto lunch break
+  const getActualHours = (entry: TimeEntry): number => {
+    if (!entry.start_time || !entry.end_time) return entry.stunden;
+    return calculateHoursWithAutoLunch(
+      entry.start_time.substring(0, 5),
+      entry.end_time.substring(0, 5)
+    );
+  };
+
   const calculateLunchBreak = (entry: TimeEntry) => {
-    // Prioritize new pause_start/pause_end fields if available
-    if (entry.pause_start && entry.pause_end) {
-      return {
-        start: entry.pause_start.substring(0, 5),
-        end: entry.pause_end.substring(0, 5),
-      };
-    }
-    
-    // Fallback for old entries with only pause_minutes
-    if (!entry.pause_minutes || entry.pause_minutes === 0) return null;
-
-    const pauseStart = new Date(`2000-01-01T12:00:00`);
-    const pauseEnd = new Date(pauseStart);
-    pauseEnd.setMinutes(pauseEnd.getMinutes() + entry.pause_minutes);
-
-    return {
-      start: format(pauseStart, "HH:mm"),
-      end: format(pauseEnd, "HH:mm"),
-    };
+    if (!entry.start_time || !entry.end_time) return null;
+    const pauseMin = calculateAutoLunchBreak(
+      entry.start_time.substring(0, 5),
+      entry.end_time.substring(0, 5)
+    );
+    if (pauseMin === 0) return null;
+    return { start: "12:00", end: "13:00" };
   };
 
   const monthDays = generateMonthDays();
-  const totalHours = timeEntries.reduce((sum, entry) => sum + entry.stunden, 0);
-  const totalOvertime = timeEntries.reduce((sum, entry) => {
-    const entryDate = parseISO(entry.datum);
-    return sum + calculateOvertime(entryDate, entry.stunden);
-  }, 0);
+  const totalHours = timeEntries.reduce((sum, entry) => sum + getActualHours(entry), 0);
+
+  // Calculate overtime per DAY (not per entry) - sum all entries for a day, then check overtime
+  const totalOvertime = (() => {
+    const dayTotals = new Map<string, { date: Date; hours: number }>();
+    for (const entry of timeEntries) {
+      const key = entry.datum;
+      const existing = dayTotals.get(key);
+      if (existing) {
+        existing.hours += getActualHours(entry);
+      } else {
+        dayTotals.set(key, { date: parseISO(entry.datum), hours: getActualHours(entry) });
+      }
+    }
+    let overtime = 0;
+    for (const { date, hours } of dayTotals.values()) {
+      overtime += calculateOvertime(date, hours);
+    }
+    return overtime;
+  })();
 
   const addBordersToCell = (cell: any, thick: boolean = false, centered: boolean = false) => {
     const borderStyle = thick ? "medium" : "thin";
@@ -274,8 +294,8 @@ export default function HoursReport() {
           const lunchBreak = calculateLunchBreak(entry);
           const project = projects[entry.project_id];
           
-          // Ort-Spalte: Baustelle oder Werkstatt
-          const ortText = entry.location_type === "baustelle" ? "Baustelle" : "Werkstatt";
+          // Ort-Spalte: Baustelle oder Lager
+          const ortText = entry.location_type === "baustelle" ? "Baustelle" : "Lager";
           
           // Projekt-Spalte: Urlaub/Krankenstand/Weiterbildung, Störung oder Projektname
           const isAbsence = ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag"].includes(entry.taetigkeit);
@@ -290,7 +310,7 @@ export default function HoursReport() {
             projektName = project?.name || "";
           }
           
-          // PLZ: nur bei Baustellen (nicht bei Abwesenheit/Werkstatt/Störung)
+          // PLZ: nur bei Baustellen (nicht bei Abwesenheit/Lager/Störung)
           const plz = (isAbsence || isDisturbance)
             ? ""
             : entry.location_type === "baustelle" ? (project?.plz || "") : "";
@@ -300,23 +320,37 @@ export default function HoursReport() {
 
           if (includeOvertime) {
             // Export MIT Überstunden: Tatsächliche Zeiten verwenden
-            const actualMorningEnd = lunchBreak?.start || "";
-            const actualAfternoonStart = lunchBreak?.end || "";
-            const actualPauseText = entry.pause_minutes && entry.pause_minutes > 0 && lunchBreak 
-              ? `${lunchBreak.start} - ${lunchBreak.end}` 
-              : "";
-            
-            const overtime = calculateOvertime(dayDate, entry.stunden);
-            const overtimeText = overtime > 0 ? overtime.toFixed(2) : "";
+            const entryHours = getActualHours(entry);
+            // Overtime based on day total, shown only on last entry
+            const dayTotalExcel = dayEntries.reduce((sum, e) => sum + getActualHours(e), 0);
+            const dayOvertimeExcel = calculateOvertime(dayDate, dayTotalExcel);
+            const isLastEntryExcel = entryIndex === dayEntries.length - 1;
+            const overtimeText = isLastEntryExcel && dayOvertimeExcel > 0 ? dayOvertimeExcel.toFixed(2) : "";
+
+            let morningEnd = "";
+            let pauseText = "";
+            let afternoonStart = "";
+            let endCol = entry.end_time?.substring(0, 5) || "";
+
+            if (lunchBreak) {
+              // Hat Mittagspause: Vormittag endet bei Pausenbeginn, Nachmittag startet bei Pausenende
+              morningEnd = lunchBreak.start;
+              pauseText = `${lunchBreak.start} - ${lunchBreak.end}`;
+              afternoonStart = lunchBreak.end;
+            } else {
+              // Keine Pause (z.B. Freitag): Endzeit in Vormittag-Spalte, Nachmittag leer
+              morningEnd = entry.end_time?.substring(0, 5) || "";
+              endCol = "";
+            }
 
             worksheetData.push([
               displayDay,
               entry.start_time?.substring(0, 5) || "",
-              actualMorningEnd,
-              actualPauseText,
-              actualAfternoonStart,
-              entry.end_time?.substring(0, 5) || "",
-              entry.stunden.toFixed(2),
+              morningEnd,
+              pauseText,
+              afternoonStart,
+              endCol,
+              entryHours.toFixed(2),
               overtimeText,
               ortText,
               projektName,
@@ -331,19 +365,13 @@ export default function HoursReport() {
             const regelarbeitszeit = isWeekend ? 0 : (isFridayCheck ? 5 : 8.5);
             
             // Regelarbeitszeiten für Zeiten
-            const regelStart = "07:30";
-            const regelMorningEnd = isFridayCheck ? "12:30" : "12:00";
-            const regelPause = isFridayCheck ? "" : "12:00 - 13:00";
-            const regelAfternoonStart = isFridayCheck ? "" : "13:00";
-            const regelEnd = isFridayCheck ? "12:30" : "17:00";
-            
             worksheetData.push([
               displayDay,
-              regelStart,
-              regelMorningEnd,
-              regelPause,
-              regelAfternoonStart,
-              regelEnd,
+              isAbsence ? "" : "07:00",                                        // Beginn Vormittag
+              isAbsence ? "" : "12:00",                                        // Ende Vormittag
+              isAbsence || isFridayCheck ? "" : "12:00 - 13:00",              // Unterbrechung
+              isAbsence || isFridayCheck ? "" : "13:00",                       // Beginn Nachmittag
+              isAbsence || isFridayCheck ? "" : "16:30",                       // Ende Nachmittag
               regelarbeitszeit.toFixed(2),
               ortText,
               projektName,
@@ -356,8 +384,8 @@ export default function HoursReport() {
 
         // Tagessumme wenn mehrere Einträge am Tag
         if (dayEntries.length > 1) {
-          const dayTotalHours = dayEntries.reduce((sum, e) => sum + e.stunden, 0);
-          const dayTotalOvertime = dayEntries.reduce((sum, e) => sum + calculateOvertime(dayDate, e.stunden), 0);
+          const dayTotalHours = dayEntries.reduce((sum, e) => sum + getActualHours(e), 0);
+          const dayTotalOvertime = calculateOvertime(dayDate, dayTotalHours);
           if (includeOvertime) {
             worksheetData.push(["", "", "", "", "", "Tagessumme:", dayTotalHours.toFixed(2), dayTotalOvertime > 0 ? dayTotalOvertime.toFixed(2) : "", "", "", "", ""]);
           } else {
@@ -366,8 +394,8 @@ export default function HoursReport() {
             const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
             const isFridayCheck = dayOfWeek === 5;
             const regelarbeitszeitTag = isWeekend ? 0 : (isFridayCheck ? 5 : 8.5);
-            // Bei mehreren Einträgen pro Tag: Regelarbeitszeit * Anzahl Einträge oder einfach die Tagessumme der Regelarbeitszeit
-            worksheetData.push(["", "", "", "", "", "Tagessumme:", (regelarbeitszeitTag * dayEntries.length).toFixed(2), "", "", "", "", ""]);
+            // Tagessumme: Regelarbeitszeit des Tages (nicht pro Eintrag multipliziert)
+            worksheetData.push(["", "", "", "", "", "Tagessumme:", regelarbeitszeitTag.toFixed(2), "", "", "", "", ""]);
           }
         }
       }
@@ -384,7 +412,7 @@ export default function HoursReport() {
           const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
           const isFridayCheck = dayOfWeek === 5;
           const regelarbeitszeit = isWeekend ? 0 : (isFridayCheck ? 5 : 8.5);
-          summe += regelarbeitszeit * dayEntries.length;
+          summe += regelarbeitszeit; // Once per day, not per entry
         }
       }
       return summe;
@@ -398,21 +426,8 @@ export default function HoursReport() {
       worksheetData.push(["", "", "", "", "", "SUMME", regelarbeitszeitSumme.toFixed(2), "", "", "", "", ""]);
     }
     
-    // Footer-Zeilen
+    // Footer-Zeilen: Datum und Unterschrift direkt unter der Tabelle
     worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
-    worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
-    worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
-    if (includeOvertime) {
-      worksheetData.push(["", "Hiermit bestätige ich die Richtigkeit der von mir angegebenen Überstunden.", "", "", "", "", "", "", "", "", "", ""]);
-      worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
-      worksheetData.push(["", `Derzeitiger offener Überstundenstand: ${totalOvertime.toFixed(2)}`, "", "", "", "", "", "", "", "", "", ""]);
-      worksheetData.push(["", "Restliche Überstunden wurden zur Gänze abgegolten.", "", "", "", "", "", "", "", "", "", ""]);
-    } else {
-      worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer statt Überstunden-Text
-      worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
-      worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
-      worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
-    }
     worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
     worksheetData.push(["", "Datum:", "", "", "", "Unterschrift:", "", "", "", "", "", ""]);
 
@@ -646,6 +661,7 @@ export default function HoursReport() {
                           <TableHead>Ort</TableHead>
                           <TableHead>Projekt</TableHead>
                           <TableHead>Tätigkeit</TableHead>
+                          {isAdmin && <TableHead className="w-[50px]"></TableHead>}
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -665,7 +681,7 @@ export default function HoursReport() {
                           monthDays.map((day) => {
                             // Finde alle Einträge für diesen Tag
                             const dayEntries = timeEntries.filter((e) => isSameDay(parseISO(e.datum), day.date));
-                            const dayTotalHours = dayEntries.reduce((sum, e) => sum + e.stunden, 0);
+                            const dayTotalHours = dayEntries.reduce((sum, e) => sum + getActualHours(e), 0);
                             const hasMultipleEntries = dayEntries.length > 1;
 
                             if (dayEntries.length === 0) {
@@ -682,17 +698,18 @@ export default function HoursReport() {
                                       </span>
                                     </div>
                                   </TableCell>
-                                  <TableCell colSpan={8}></TableCell>
+                                  <TableCell colSpan={isAdmin ? 9 : 8}></TableCell>
                                 </TableRow>
                               );
                             }
 
                             return dayEntries.map((entry, entryIndex) => {
                               const lunchBreak = calculateLunchBreak(entry);
-                              const overtime = calculateOvertime(day.date, entry.stunden);
+                              const entryHours = getActualHours(entry);
+                              const dayOvertime = calculateOvertime(day.date, dayTotalHours);
                               const project = projects[entry.project_id];
                               const ortIcon = entry.location_type === "baustelle" ? "🏗️" : entry.location_type === "werkstatt" ? "🔧" : "";
-                              const ortText = entry.location_type === "baustelle" ? "Baustelle" : entry.location_type === "werkstatt" ? "Werkstatt" : "";
+                              const ortText = entry.location_type === "baustelle" ? "Baustelle" : entry.location_type === "werkstatt" ? "Lager" : "";
                               const projektName = entry.taetigkeit === "Urlaub" || entry.taetigkeit === "Krankenstand"
                                 ? entry.taetigkeit
                                 : (project?.name || "");
@@ -721,7 +738,7 @@ export default function HoursReport() {
                                     <div className="flex items-center gap-1">
                                       <span>{entry.start_time?.substring(0, 5)}</span>
                                       <span>-</span>
-                                      <span>{day.isFriday ? "12:30" : "12:00"}</span>
+                                      <span>{lunchBreak ? lunchBreak.start : entry.end_time?.substring(0, 5)}</span>
                                     </div>
                                   </TableCell>
                                   <TableCell>
@@ -739,7 +756,7 @@ export default function HoursReport() {
                                     )}
                                   </TableCell>
                                   <TableCell className="text-right font-medium">
-                                    {entry.stunden.toFixed(2)} h
+                                    {entryHours.toFixed(2)} h
                                     {hasMultipleEntries && isLastEntry && (
                                       <div className="text-xs text-primary font-bold mt-1">
                                         Σ {dayTotalHours.toFixed(2)} h
@@ -747,9 +764,9 @@ export default function HoursReport() {
                                     )}
                                   </TableCell>
                                   <TableCell className="text-right">
-                                    {overtime > 0 && (
+                                    {isLastEntry && dayOvertime > 0 && (
                                       <span className="text-orange-600 font-medium">
-                                        +{overtime.toFixed(2)} h
+                                        +{dayOvertime.toFixed(2)} h
                                       </span>
                                     )}
                                   </TableCell>
@@ -765,6 +782,26 @@ export default function HoursReport() {
                                   <TableCell className="max-w-[150px] truncate">
                                     {entry.taetigkeit}
                                   </TableCell>
+                                  {isAdmin && (
+                                    <TableCell>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        onClick={() => {
+                                          const params = new URLSearchParams();
+                                          params.set("user_id", selectedUserId);
+                                          params.set("date", entry.datum);
+                                          params.set("edit", "true");
+                                          params.set("return_month", month.toString());
+                                          params.set("return_year", year.toString());
+                                          navigate(`/time-tracking?${params.toString()}`);
+                                        }}
+                                      >
+                                        <Pencil className="h-3 w-3" />
+                                      </Button>
+                                    </TableCell>
+                                  )}
                                 </TableRow>
                               );
                             });
@@ -782,7 +819,7 @@ export default function HoursReport() {
                           <TableCell className="text-right font-bold text-orange-600">
                             {totalOvertime.toFixed(2)} h
                           </TableCell>
-                          <TableCell colSpan={3}></TableCell>
+                          <TableCell colSpan={isAdmin ? 4 : 3}></TableCell>
                         </TableRow>
                       </TableFooter>
                     </Table>

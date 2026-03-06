@@ -9,47 +9,30 @@ export interface WorkTimePreset {
 
 /**
  * Gibt die Normalarbeitszeit für einen Tag zurück
- * Mo-Do: 8.5h, Fr: 4.5h (ohne Überstunde), Sa-So: 0h
+ * Mo-Do: 8.5h (07:00-16:30, 60min Pause 12:00-13:00), Fr: 5h (07:00-12:00, keine Pause), Sa-So: 0h
+ * Wochensumme: 39h
  */
 export function getNormalWorkingHours(date: Date): number {
   const dayOfWeek = date.getDay();
-  
+
   // Wochenende
   if (dayOfWeek === 0 || dayOfWeek === 6) return 0;
-  
-  // Montag - Donnerstag: 8.5 Stunden
+
+  // Montag - Donnerstag: 8.5 Stunden (9.5h - 1h Pause)
   if (dayOfWeek >= 1 && dayOfWeek <= 4) return 8.5;
-  
-  // Freitag: 4.5 Stunden (ohne die 0.5h Überstunde)
-  if (dayOfWeek === 5) return 4.5;
-  
+
+  // Freitag: 5.0 Stunden (07:00-12:00, keine Pause)
+  if (dayOfWeek === 5) return 5.0;
+
   return 0;
 }
 
 /**
- * Gibt die Freitags-Überstunde zurück (0.5h für ZA)
- */
-export function getFridayOvertime(date: Date): number {
-  return date.getDay() === 5 ? 0.5 : 0;
-}
-
-/**
- * Gibt die tatsächlichen Arbeitsstunden für Freitag zurück (inkl. Überstunde)
- * Mo-Do: 8.5h, Fr: 5.0h (inkl. 0.5h Überstunde), Sa-So: 0h
+ * Gibt die tatsächlichen Arbeitsstunden für einen Tag zurück
+ * Mo-Do: 8.0h, Fr: 5.0h, Sa-So: 0h
  */
 export function getTotalWorkingHours(date: Date): number {
-  const dayOfWeek = date.getDay();
-  
-  // Wochenende
-  if (dayOfWeek === 0 || dayOfWeek === 6) return 0;
-  
-  // Montag - Donnerstag: 8.5 Stunden
-  if (dayOfWeek >= 1 && dayOfWeek <= 4) return 8.5;
-  
-  // Freitag: 5.0 Stunden (inkl. 0.5h Überstunde)
-  if (dayOfWeek === 5) return 5.0;
-  
-  return 0;
+  return getNormalWorkingHours(date);
 }
 
 /**
@@ -60,26 +43,59 @@ export function getWeeklyTargetHours(): number {
 }
 
 /**
+ * Berechnet die automatische Mittagspause (12:00-13:00).
+ * Wenn der Zeitblock über 12:00-13:00 hinweg geht, werden 60 Minuten abgezogen.
+ */
+export function calculateAutoLunchBreak(startTime: string, endTime: string): number {
+  const [startH, startM] = startTime.split(':').map(Number);
+  const [endH, endM] = endTime.split(':').map(Number);
+  const startMin = startH * 60 + startM;
+  const endMin = endH * 60 + endM;
+
+  const lunchStart = 12 * 60; // 12:00
+  const lunchEnd = 13 * 60;   // 13:00
+
+  // Overlap between [startMin, endMin] and [lunchStart, lunchEnd]
+  const overlapStart = Math.max(startMin, lunchStart);
+  const overlapEnd = Math.min(endMin, lunchEnd);
+  const overlap = Math.max(0, overlapEnd - overlapStart);
+
+  // Only deduct if the block fully spans 12:00-13:00
+  return overlap >= 60 ? 60 : 0;
+}
+
+/**
+ * Berechnet Arbeitsstunden aus Start- und Endzeit abzüglich automatischer Mittagspause.
+ */
+export function calculateHoursWithAutoLunch(startTime: string, endTime: string): number {
+  const [startH, startM] = startTime.split(':').map(Number);
+  const [endH, endM] = endTime.split(':').map(Number);
+  const totalMinutes = (endH * 60 + endM) - (startH * 60 + startM);
+  const pauseMinutes = calculateAutoLunchBreak(startTime, endTime);
+  return Math.max(0, (totalMinutes - pauseMinutes) / 60);
+}
+
+/**
  * Gibt Standard-Arbeitszeiten für einen Tag zurück
  */
 export function getDefaultWorkTimes(date: Date): WorkTimePreset | null {
   const dayOfWeek = date.getDay();
-  
+
   // Wochenende
   if (dayOfWeek === 0 || dayOfWeek === 6) return null;
-  
-  // Montag - Donnerstag: 07:00 - 16:00, Pause 12:00 - 12:30
+
+  // Montag - Donnerstag: 07:00 - 16:30, Pause 12:00 - 13:00
   if (dayOfWeek >= 1 && dayOfWeek <= 4) {
     return {
       startTime: "07:00",
-      endTime: "16:00",
+      endTime: "16:30",
       pauseStart: "12:00",
-      pauseEnd: "12:30",
-      pauseMinutes: 30,
+      pauseEnd: "13:00",
+      pauseMinutes: 60,
       totalHours: 8.5
     };
   }
-  
+
   // Freitag: 07:00 - 12:00, keine Pause
   if (dayOfWeek === 5) {
     return {
@@ -91,7 +107,7 @@ export function getDefaultWorkTimes(date: Date): WorkTimePreset | null {
       totalHours: 5.0
     };
   }
-  
+
   return null;
 }
 

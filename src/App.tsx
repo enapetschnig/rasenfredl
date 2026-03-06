@@ -48,11 +48,33 @@ function AppContent() {
   }, [navigate]);
 
   // Ensure user profile exists (for users created via Cloud dashboard)
+  // Auto-assign admin role for rasenfredl@gmail.com
   useEffect(() => {
     const ensureProfile = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         await supabase.rpc('ensure_user_profile');
+
+        // Auto admin role for rasenfredl@gmail.com
+        if (user.email === "rasenfredl@gmail.com") {
+          const { data: existingRole } = await supabase
+            .from("user_roles")
+            .select("role")
+            .eq("user_id", user.id)
+            .single();
+
+          if (!existingRole) {
+            await supabase.from("user_roles").insert({
+              user_id: user.id,
+              role: "administrator",
+            });
+          } else if (existingRole.role !== "administrator") {
+            await supabase
+              .from("user_roles")
+              .update({ role: "administrator" })
+              .eq("user_id", user.id);
+          }
+        }
       }
     };
     ensureProfile();

@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Calendar, Clock, User, Mail, Phone, MapPin, FileText, Package, Plus, Trash2 } from "lucide-react";
+import { Calendar, Clock, User, Mail, Phone, MapPin, FileText, Package, Plus, Trash2, ChevronDown, Check, X } from "lucide-react";
+import { calculateAutoLunchBreak } from "@/lib/workingHours";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,7 +11,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
-import { MultiEmployeeSelect } from "@/components/MultiEmployeeSelect";
 
 type MaterialEntry = {
   id: string;
@@ -36,6 +37,21 @@ type DisturbanceFormProps = {
   } | null;
 };
 
+const WORK_TYPES = [
+  "Rasenmähen",
+  "Heckenschnitt",
+  "Strauchschnitt",
+  "Baumschnitt",
+  "Unkraut entfernen",
+  "Laubentfernung",
+  "Vertikutieren",
+  "Bodenbearbeitung",
+  "Pflanzarbeiten",
+  "Bewässerungsanlage",
+  "Neuanlage Rasen",
+  "Auskoffern",
+];
+
 export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: DisturbanceFormProps) => {
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -54,7 +70,6 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
     notizen: "",
   });
 
-  const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
   const [materials, setMaterials] = useState<MaterialEntry[]>([]);
 
   useEffect(() => {
@@ -71,11 +86,8 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
         beschreibung: editData.beschreibung,
         notizen: editData.notizen || "",
       });
-      // Load existing workers and materials when editing
-      loadExistingWorkers(editData.id);
       loadExistingMaterials(editData.id);
     } else {
-      // Reset form for new entry
       setFormData({
         datum: format(new Date(), "yyyy-MM-dd"),
         startTime: "08:00",
@@ -88,43 +100,25 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
         beschreibung: "",
         notizen: "",
       });
-      setSelectedEmployees([]);
       setMaterials([]);
     }
   }, [editData, open]);
-
-  const loadExistingWorkers = async (disturbanceId: string) => {
-    const { data } = await supabase
-      .from("disturbance_workers")
-      .select("user_id, is_main")
-      .eq("disturbance_id", disturbanceId);
-    
-    if (data) {
-      // Only load non-main workers (main is the creator)
-      const additionalWorkers = data.filter(w => !w.is_main).map(w => w.user_id);
-      setSelectedEmployees(additionalWorkers);
-    }
-  };
 
   const loadExistingMaterials = async (disturbanceId: string) => {
     const { data } = await supabase
       .from("disturbance_materials")
       .select("id, material, menge")
       .eq("disturbance_id", disturbanceId);
-    
     if (data) {
-      setMaterials(data.map(m => ({
-        id: m.id,
-        material: m.material,
-        menge: m.menge || "",
-      })));
+      setMaterials(data.map(m => ({ id: m.id, material: m.material, menge: m.menge || "" })));
     }
   };
 
   const calculateHours = (): number => {
     const [startH, startM] = formData.startTime.split(":").map(Number);
     const [endH, endM] = formData.endTime.split(":").map(Number);
-    const totalMinutes = (endH * 60 + endM) - (startH * 60 + startM) - formData.pauseMinutes;
+    const pauseMinutes = calculateAutoLunchBreak(formData.startTime, formData.endTime);
+    const totalMinutes = (endH * 60 + endM) - (startH * 60 + startM) - pauseMinutes;
     return Math.max(0, totalMinutes / 60);
   };
 
@@ -140,37 +134,18 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
     setMaterials(materials.map(m => m.id === id ? { ...m, [field]: value } : m));
   };
 
-  const timeToMin = (t: string) => {
-    const [h, m] = t.split(":").map(Number);
-    return h * 60 + m;
+  const toggleWorkType = (workType: string) => {
+    const current = formData.beschreibung;
+    const lines = current.split("\n").map(l => l.trim()).filter(Boolean);
+    if (lines.includes(workType)) {
+      setFormData({ ...formData, beschreibung: lines.filter(l => l !== workType).join("\n") });
+    } else {
+      setFormData({ ...formData, beschreibung: current ? `${current}\n${workType}` : workType });
+    }
   };
 
-  const checkTimeConflicts = async (
-    userId: string,
-    date: string,
-    startTime: string,
-    endTime: string,
-    excludeDisturbanceId?: string
-  ): Promise<string[]> => {
-    const { data: entries } = await supabase
-      .from("time_entries")
-      .select("id, start_time, end_time, taetigkeit, disturbance_id")
-      .eq("user_id", userId)
-      .eq("datum", date);
-
-    if (!entries) return [];
-
-    const newStart = timeToMin(startTime);
-    const newEnd = timeToMin(endTime);
-
-    return entries
-      .filter(e => {
-        if (excludeDisturbanceId && e.disturbance_id === excludeDisturbanceId) return false;
-        const s = timeToMin(e.start_time.slice(0, 5));
-        const en = timeToMin(e.end_time.slice(0, 5));
-        return s < newEnd && en > newStart;
-      })
-      .map(e => e.taetigkeit || "Eintrag");
+  const isWorkTypeSelected = (workType: string) => {
+    return formData.beschreibung.split("\n").map(l => l.trim()).includes(workType);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -184,7 +159,6 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
       return;
     }
 
-    // Validation
     if (!formData.kundeName.trim()) {
       toast({ variant: "destructive", title: "Fehler", description: "Kundenname ist erforderlich" });
       setSaving(false);
@@ -205,32 +179,15 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
       return;
     }
 
-    // Check for time conflicts with existing entries (current user + team members)
-    const allUsersToCheck = [user.id, ...selectedEmployees];
-    for (const uid of allUsersToCheck) {
-      const conflicts = await checkTimeConflicts(uid, formData.datum, formData.startTime, formData.endTime, editData?.id);
-      if (conflicts.length > 0) {
-        const isTeamMember = uid !== user.id;
-        toast({
-          variant: "destructive",
-          title: "Zeitüberschneidung",
-          description: isTeamMember
-            ? `Ein ausgewähltes Team-Mitglied hat bereits einen Eintrag in diesem Zeitraum: "${conflicts[0]}".`
-            : `Für diesen Zeitraum gibt es bereits einen Eintrag: "${conflicts[0]}". Bitte anderen Zeitraum wählen.`,
-        });
-        setSaving(false);
-        return;
-      }
-    }
-
     const stunden = calculateHours();
+    const pauseMinutes = calculateAutoLunchBreak(formData.startTime, formData.endTime);
 
     const disturbanceData = {
       user_id: user.id,
       datum: formData.datum,
       start_time: formData.startTime,
       end_time: formData.endTime,
-      pause_minutes: formData.pauseMinutes,
+      pause_minutes: pauseMinutes,
       stunden,
       kunde_name: formData.kundeName.trim(),
       kunde_email: formData.kundeEmail.trim() || null,
@@ -241,7 +198,6 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
     };
 
     if (editData) {
-      // Update existing
       const { error } = await supabase
         .from("disturbances")
         .update(disturbanceData)
@@ -253,16 +209,37 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
         return;
       }
 
-      // Update time entries for all workers
-      await updateTimeEntriesForAllWorkers(editData.id, user.id, stunden);
-      
-      // Update workers
-      await updateDisturbanceWorkers(editData.id, user.id, selectedEmployees);
-      
+      // Update time entry for this disturbance
+      await supabase
+        .from("time_entries")
+        .update({
+          datum: formData.datum,
+          start_time: formData.startTime,
+          end_time: formData.endTime,
+          pause_minutes: pauseMinutes,
+          stunden,
+          taetigkeit: `Regiebericht: ${formData.kundeName.trim()}`,
+        })
+        .eq("disturbance_id", editData.id)
+        .eq("user_id", user.id);
+
       // Update materials
-      await updateMaterials(editData.id, user.id);
+      await supabase.from("disturbance_materials").delete().eq("disturbance_id", editData.id);
+      const validMaterials = materials.filter(m => m.material.trim());
+      if (validMaterials.length > 0) {
+        await supabase.from("disturbance_materials").insert(
+          validMaterials.map(m => ({
+            disturbance_id: editData.id,
+            user_id: user.id,
+            material: m.material.trim(),
+            menge: m.menge.trim() || null,
+          }))
+        );
+      }
 
       toast({ title: "Erfolg", description: "Regiebericht wurde aktualisiert" });
+      setSaving(false);
+      onSuccess();
     } else {
       // Create new disturbance
       const { data: newDisturbance, error } = await supabase
@@ -277,48 +254,22 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
         return;
       }
 
-      // Prepare main entry for current user
-      const mainEntry = {
+      // Insert time entry directly (bypasses RLS issues, works for own entries)
+      const { error: timeError } = await supabase.from("time_entries").insert({
         user_id: user.id,
         datum: formData.datum,
         start_time: formData.startTime,
         end_time: formData.endTime,
-        pause_minutes: formData.pauseMinutes,
+        pause_minutes: pauseMinutes,
         stunden,
         project_id: null,
         disturbance_id: newDisturbance.id,
         taetigkeit: `Regiebericht: ${formData.kundeName.trim()}`,
         location_type: "baustelle",
-      };
+      });
 
-      // Prepare team entries for additional workers
-      const teamEntries = selectedEmployees.map(workerId => ({
-        user_id: workerId,
-        datum: formData.datum,
-        start_time: formData.startTime,
-        end_time: formData.endTime,
-        pause_minutes: formData.pauseMinutes,
-        stunden,
-        project_id: null,
-        disturbance_id: newDisturbance.id,
-        taetigkeit: `Regiebericht: ${formData.kundeName.trim()}`,
-        location_type: "baustelle",
-      }));
-
-      // Call Edge Function to create time entries (bypasses RLS for team members)
-      const { data: timeResult, error: timeError } = await supabase.functions.invoke(
-        "create-team-time-entries",
-        {
-          body: {
-            mainEntry,
-            teamEntries,
-            createWorkerLinks: false, // Disturbances use disturbance_workers instead
-          },
-        }
-      );
-
-      if (timeError || !timeResult?.success) {
-        console.error("Time entry creation failed:", timeError || timeResult?.error);
+      if (timeError) {
+        console.error("Time entry creation failed:", timeError);
       }
 
       // Add main worker entry
@@ -327,15 +278,6 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
         user_id: user.id,
         is_main: true,
       });
-
-      // Add worker entries for additional workers
-      for (const workerId of selectedEmployees) {
-        await supabase.from("disturbance_workers").insert({
-          disturbance_id: newDisturbance.id,
-          user_id: workerId,
-          is_main: false,
-        });
-      }
 
       // Create materials
       const validMaterials = materials.filter(m => m.material.trim());
@@ -351,145 +293,10 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
       }
 
       toast({ title: "Erfolg", description: "Regiebericht wurde erfasst" });
-      
       setSaving(false);
       onOpenChange(false);
-      
-      // Navigate to detail page with signature dialog open
       navigate(`/disturbances/${newDisturbance.id}?openSignature=true`);
       return;
-    }
-
-    setSaving(false);
-    onSuccess();
-  };
-
-  const updateTimeEntriesForAllWorkers = async (disturbanceId: string, mainUserId: string, stunden: number) => {
-    // Update existing time entries
-    await supabase
-      .from("time_entries")
-      .update({
-        datum: formData.datum,
-        start_time: formData.startTime,
-        end_time: formData.endTime,
-        pause_minutes: formData.pauseMinutes,
-        stunden,
-        taetigkeit: `Regiebericht: ${formData.kundeName.trim()}`,
-      })
-      .eq("disturbance_id", disturbanceId);
-  };
-
-  const updateDisturbanceWorkers = async (disturbanceId: string, mainUserId: string, newWorkerIds: string[]) => {
-    // Get current workers
-    const { data: currentWorkers } = await supabase
-      .from("disturbance_workers")
-      .select("user_id, is_main")
-      .eq("disturbance_id", disturbanceId);
-
-    const currentNonMainIds = (currentWorkers || [])
-      .filter(w => !w.is_main)
-      .map(w => w.user_id);
-
-    // Workers to add
-    const toAdd = newWorkerIds.filter(id => !currentNonMainIds.includes(id));
-    
-    // Workers to remove
-    const toRemove = currentNonMainIds.filter(id => !newWorkerIds.includes(id));
-
-    // Remove workers and their time entries
-    for (const workerId of toRemove) {
-      await supabase
-        .from("time_entries")
-        .delete()
-        .eq("disturbance_id", disturbanceId)
-        .eq("user_id", workerId);
-      
-      await supabase
-        .from("disturbance_workers")
-        .delete()
-        .eq("disturbance_id", disturbanceId)
-        .eq("user_id", workerId);
-    }
-
-    // Add new workers via Edge Function (bypasses RLS)
-    if (toAdd.length > 0) {
-      const stunden = calculateHours();
-      
-      // Get current user for main entry validation
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      if (!currentUser) return;
-
-      // Create time entries for new workers via Edge Function
-      // Use skipMainEntry=true since the main user already has their entry
-      const teamEntries = toAdd.map(workerId => ({
-        user_id: workerId,
-        datum: formData.datum,
-        start_time: formData.startTime,
-        end_time: formData.endTime,
-        pause_minutes: formData.pauseMinutes,
-        stunden,
-        project_id: null,
-        disturbance_id: disturbanceId,
-        taetigkeit: `Regiebericht: ${formData.kundeName.trim()}`,
-        location_type: "baustelle",
-      }));
-
-      const { error: timeError } = await supabase.functions.invoke(
-        "create-team-time-entries",
-        {
-          body: {
-            mainEntry: {
-              user_id: currentUser.id,
-              datum: formData.datum,
-              start_time: formData.startTime,
-              end_time: formData.endTime,
-              pause_minutes: formData.pauseMinutes,
-              stunden,
-            project_id: null,
-            disturbance_id: disturbanceId,
-            taetigkeit: `Regiebericht: ${formData.kundeName.trim()}`,
-            location_type: "baustelle",
-          },
-          teamEntries,
-            createWorkerLinks: false,
-            skipMainEntry: true, // Don't create duplicate main entry
-          },
-        }
-      );
-
-      if (timeError) {
-        console.error("Error creating time entries for workers:", timeError);
-      }
-
-      // Add disturbance_workers entries
-      for (const workerId of toAdd) {
-        await supabase.from("disturbance_workers").insert({
-          disturbance_id: disturbanceId,
-          user_id: workerId,
-          is_main: false,
-        });
-      }
-    }
-  };
-
-  const updateMaterials = async (disturbanceId: string, userId: string) => {
-    // Delete existing materials
-    await supabase
-      .from("disturbance_materials")
-      .delete()
-      .eq("disturbance_id", disturbanceId);
-
-    // Add new materials
-    const validMaterials = materials.filter(m => m.material.trim());
-    if (validMaterials.length > 0) {
-      await supabase.from("disturbance_materials").insert(
-        validMaterials.map(m => ({
-          disturbance_id: disturbanceId,
-          user_id: userId,
-          material: m.material.trim(),
-          menge: m.menge.trim() || null,
-        }))
-      );
     }
   };
 
@@ -502,150 +309,214 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
             {editData ? "Regiebericht bearbeiten" : "Neuen Regiebericht erfassen"}
           </DialogTitle>
           <DialogDescription>
-            Erfassen Sie einen Service-Einsatz beim Kunden. Die Arbeitszeit wird automatisch für alle beteiligten Mitarbeiter gebucht.
+            Erfassen Sie einen Service-Einsatz beim Kunden.
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto pr-1">
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Date and Time Section */}
-          <div className="space-y-4">
-            <h3 className="font-medium flex items-center gap-2">
-              <Calendar className="h-4 w-4" />
-              Datum & Uhrzeit
-            </h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="col-span-2">
-                <Label htmlFor="datum">Datum</Label>
-                <Input
-                  id="datum"
-                  type="date"
-                  value={formData.datum}
-                  onChange={(e) => setFormData({ ...formData, datum: e.target.value })}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="startTime">Startzeit</Label>
-                <Input
-                  id="startTime"
-                  type="time"
-                  value={formData.startTime}
-                  onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="endTime">Endzeit</Label>
-                <Input
-                  id="endTime"
-                  type="time"
-                  value={formData.endTime}
-                  onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="pauseMinutes">Pause (Minuten)</Label>
-                <Input
-                  id="pauseMinutes"
-                  type="number"
-                  min="0"
-                  value={formData.pauseMinutes}
-                  onChange={(e) => setFormData({ ...formData, pauseMinutes: parseInt(e.target.value) || 0 })}
-                />
-              </div>
-              <div className="flex items-end">
-                <div className="bg-muted rounded-md px-3 py-2 w-full text-center">
-                  <span className="text-sm text-muted-foreground">Stunden: </span>
-                  <span className="font-bold text-primary">{calculateHours().toFixed(2)}</span>
+          <form onSubmit={handleSubmit} className="space-y-6 pb-2">
+            {/* Date and Time Section */}
+            <div className="space-y-4">
+              <h3 className="font-medium flex items-center gap-2">
+                <Calendar className="h-4 w-4" />
+                Datum & Uhrzeit
+              </h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <Label htmlFor="datum">Datum</Label>
+                  <Input
+                    id="datum"
+                    type="date"
+                    value={formData.datum}
+                    onChange={(e) => setFormData({ ...formData, datum: e.target.value })}
+                    className="h-12 text-base"
+                    required
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="startTime">Startzeit</Label>
+                  <Input
+                    id="startTime"
+                    type="time"
+                    value={formData.startTime}
+                    onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
+                    className="h-12 text-base"
+                    required
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="endTime">Endzeit</Label>
+                  <Input
+                    id="endTime"
+                    type="time"
+                    value={formData.endTime}
+                    onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
+                    className="h-12 text-base"
+                    required
+                  />
+                </div>
+                <div className="flex items-end">
+                  <div className="bg-muted rounded-xl px-3 py-3 w-full text-center">
+                    <span className="text-sm text-muted-foreground">Stunden: </span>
+                    <span className="font-bold text-primary text-lg">{calculateHours().toFixed(2)}</span>
+                    {calculateAutoLunchBreak(formData.startTime, formData.endTime) > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1">inkl. 60 Min. Mittagspause</p>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          {/* Customer Section */}
-          <div className="space-y-4">
-            <h3 className="font-medium flex items-center gap-2">
-              <User className="h-4 w-4" />
-              Kundendaten
-            </h3>
-            <div className="space-y-3">
-              <div>
-                <Label htmlFor="kundeName">Kundenname *</Label>
-                <Input
-                  id="kundeName"
-                  value={formData.kundeName}
-                  onChange={(e) => setFormData({ ...formData, kundeName: e.target.value })}
-                  placeholder="Max Mustermann"
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="kundeEmail" className="flex items-center gap-1">
-                  <Mail className="h-3 w-3" /> E-Mail (optional)
-                </Label>
-                <Input
-                  id="kundeEmail"
-                  type="email"
-                  value={formData.kundeEmail}
-                  onChange={(e) => setFormData({ ...formData, kundeEmail: e.target.value })}
-                  placeholder="kunde@email.at"
-                />
-              </div>
-              <div>
-                <Label htmlFor="kundeTelefon" className="flex items-center gap-1">
-                  <Phone className="h-3 w-3" /> Telefon (optional)
-                </Label>
-                <Input
-                  id="kundeTelefon"
-                  type="tel"
-                  value={formData.kundeTelefon}
-                  onChange={(e) => setFormData({ ...formData, kundeTelefon: e.target.value })}
-                  placeholder="+43 664 ..."
-                />
-              </div>
-              <div>
-                <Label htmlFor="kundeAdresse" className="flex items-center gap-1">
-                  <MapPin className="h-3 w-3" /> Adresse (optional)
-                </Label>
-                <Input
-                  id="kundeAdresse"
-                  value={formData.kundeAdresse}
-                  onChange={(e) => setFormData({ ...formData, kundeAdresse: e.target.value })}
-                  placeholder="Musterstraße 1, 9020 Klagenfurt"
-                />
+            {/* Customer Section */}
+            <div className="space-y-4">
+              <h3 className="font-medium flex items-center gap-2">
+                <User className="h-4 w-4" />
+                Kundendaten
+              </h3>
+              <div className="space-y-3">
+                <div>
+                  <Label htmlFor="kundeName">Kundenname *</Label>
+                  <Input
+                    id="kundeName"
+                    value={formData.kundeName}
+                    onChange={(e) => setFormData({ ...formData, kundeName: e.target.value })}
+                    placeholder="Max Mustermann"
+                    className="h-12 text-base"
+                    required
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="kundeEmail" className="flex items-center gap-1">
+                    <Mail className="h-3 w-3" /> E-Mail (optional)
+                  </Label>
+                  <Input
+                    id="kundeEmail"
+                    type="email"
+                    value={formData.kundeEmail}
+                    onChange={(e) => setFormData({ ...formData, kundeEmail: e.target.value })}
+                    placeholder="kunde@email.at"
+                    className="h-12 text-base"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="kundeTelefon" className="flex items-center gap-1">
+                    <Phone className="h-3 w-3" /> Telefon (optional)
+                  </Label>
+                  <Input
+                    id="kundeTelefon"
+                    type="tel"
+                    value={formData.kundeTelefon}
+                    onChange={(e) => setFormData({ ...formData, kundeTelefon: e.target.value })}
+                    placeholder="+43 664 ..."
+                    className="h-12 text-base"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="kundeAdresse" className="flex items-center gap-1">
+                    <MapPin className="h-3 w-3" /> Adresse (optional)
+                  </Label>
+                  <Input
+                    id="kundeAdresse"
+                    value={formData.kundeAdresse}
+                    onChange={(e) => setFormData({ ...formData, kundeAdresse: e.target.value })}
+                    placeholder="Musterstraße 1, 9020 Klagenfurt"
+                    className="h-12 text-base"
+                  />
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Multi-Employee Selection */}
-          <MultiEmployeeSelect
-            selectedEmployees={selectedEmployees}
-            onSelectionChange={setSelectedEmployees}
-            date={formData.datum}
-            startTime={formData.startTime}
-            endTime={formData.endTime}
-          />
+            {/* Work Description Section */}
+            <div className="space-y-4">
+              <h3 className="font-medium flex items-center gap-2">
+                <FileText className="h-4 w-4" />
+                Durchgeführte Arbeiten *
+              </h3>
 
-          {/* Work Description Section */}
-          <div className="space-y-4">
-            <h3 className="font-medium flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              Arbeitsdetails
-            </h3>
-            <div className="space-y-3">
+              {/* Dropdown for work type selection */}
               <div>
-                <Label htmlFor="beschreibung">Durchgeführte Arbeit *</Label>
+                <Label>Tätigkeiten auswählen</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full h-12 justify-between text-base font-normal mt-1"
+                    >
+                      {(() => {
+                        const selected = WORK_TYPES.filter(wt => isWorkTypeSelected(wt));
+                        if (selected.length === 0) return <span className="text-muted-foreground">Tätigkeit wählen...</span>;
+                        if (selected.length === 1) return selected[0];
+                        return `${selected.length} Tätigkeiten ausgewählt`;
+                      })()}
+                      <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                    <div className="max-h-60 overflow-y-auto p-1">
+                      {WORK_TYPES.map((wt) => {
+                        const selected = isWorkTypeSelected(wt);
+                        return (
+                          <button
+                            key={wt}
+                            type="button"
+                            onClick={() => toggleWorkType(wt)}
+                            className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm text-left transition-colors ${
+                              selected
+                                ? "bg-primary/10 text-primary font-medium"
+                                : "hover:bg-muted text-foreground"
+                            }`}
+                          >
+                            <span className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${
+                              selected
+                                ? "border-primary bg-primary text-primary-foreground"
+                                : "border-muted-foreground/30"
+                            }`}>
+                              {selected && <Check className="w-3 h-3" />}
+                            </span>
+                            {wt}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              {/* Selected work types as removable tags */}
+              {(() => {
+                const selected = WORK_TYPES.filter(wt => isWorkTypeSelected(wt));
+                if (selected.length === 0) return null;
+                return (
+                  <div className="flex flex-wrap gap-1.5">
+                    {selected.map((wt) => (
+                      <span
+                        key={wt}
+                        className="inline-flex items-center gap-1 bg-primary/10 text-primary text-sm font-medium px-2.5 py-1 rounded-lg"
+                      >
+                        {wt}
+                        <button type="button" onClick={() => toggleWorkType(wt)} className="hover:bg-primary/20 rounded p-0.5">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              <div>
+                <Label htmlFor="beschreibung">Eigene Tätigkeit / Zusatztext</Label>
                 <Textarea
                   id="beschreibung"
                   value={formData.beschreibung}
                   onChange={(e) => setFormData({ ...formData, beschreibung: e.target.value })}
-                  placeholder="Beschreiben Sie die durchgeführten Arbeiten..."
-                  rows={4}
+                  placeholder="Eigene Tätigkeit eingeben oder Auswahl oben ergänzen..."
+                  rows={3}
+                  className="text-base mt-1"
                   required
                 />
               </div>
+
               <div>
                 <Label htmlFor="notizen">Notizen (optional)</Label>
                 <Textarea
@@ -654,55 +525,55 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
                   onChange={(e) => setFormData({ ...formData, notizen: e.target.value })}
                   placeholder="Zusätzliche Bemerkungen..."
                   rows={2}
+                  className="text-base"
                 />
               </div>
             </div>
-          </div>
 
-          {/* Materials Section */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-medium flex items-center gap-2">
-                <Package className="h-4 w-4" />
-                Verwendetes Material (optional)
-              </h3>
-              <Button type="button" variant="outline" size="sm" onClick={addMaterial}>
-                <Plus className="h-4 w-4 mr-1" />
-                Material
-              </Button>
-            </div>
-            
-            {materials.length > 0 && (
-              <div className="space-y-2">
-                {materials.map((mat) => (
-                  <div key={mat.id} className="flex gap-2 items-start">
-                    <Input
-                      placeholder="Material"
-                      value={mat.material}
-                      onChange={(e) => updateMaterial(mat.id, "material", e.target.value)}
-                      className="flex-1"
-                    />
-                    <Input
-                      placeholder="Menge"
-                      value={mat.menge}
-                      onChange={(e) => updateMaterial(mat.id, "menge", e.target.value)}
-                      className="w-24"
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeMaterial(mat.id)}
-                      className="text-destructive hover:text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ))}
+            {/* Materials Section */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-medium flex items-center gap-2">
+                  <Package className="h-4 w-4" />
+                  Material (optional)
+                </h3>
+                <Button type="button" variant="outline" size="sm" onClick={addMaterial}>
+                  <Plus className="h-4 w-4 mr-1" />
+                  Material
+                </Button>
               </div>
-            )}
-          </div>
-        </form>
+
+              {materials.length > 0 && (
+                <div className="space-y-2">
+                  {materials.map((mat) => (
+                    <div key={mat.id} className="flex gap-2 items-start">
+                      <Input
+                        placeholder="Material"
+                        value={mat.material}
+                        onChange={(e) => updateMaterial(mat.id, "material", e.target.value)}
+                        className="flex-1 h-11 text-base"
+                      />
+                      <Input
+                        placeholder="Menge"
+                        value={mat.menge}
+                        onChange={(e) => updateMaterial(mat.id, "menge", e.target.value)}
+                        className="w-24 h-11 text-base"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeMaterial(mat.id)}
+                        className="text-destructive hover:text-destructive h-11 w-11"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </form>
         </div>
 
         {/* Sticky Actions */}
@@ -710,11 +581,15 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Abbrechen
           </Button>
-          <Button onClick={(e) => { 
-            e.preventDefault();
-            const form = document.querySelector('form');
-            if (form) form.requestSubmit();
-          }} disabled={saving}>
+          <Button
+            onClick={(e) => {
+              e.preventDefault();
+              const form = document.querySelector('form');
+              if (form) form.requestSubmit();
+            }}
+            disabled={saving}
+            className="flex-1 sm:flex-none h-12"
+          >
             {saving ? "Speichern..." : editData ? "Aktualisieren" : "Regiebericht erfassen"}
           </Button>
         </div>

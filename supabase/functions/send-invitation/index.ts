@@ -69,11 +69,11 @@ Deno.serve(async (req) => {
     }
 
     // Generate registration link
-    const appUrl = 'https://elektro-brodnig.app';
+    const appUrl = 'https://www.maierhold.app';
     const registrationLink = `${appUrl}/auth`;
-    
+
     // Compose SMS message
-    const smsText = `Willkommen bei Elektro Brodnig! Bitte registriere dich in unserer Mitarbeiter-App:\n${registrationLink}`;
+    const smsText = `Bitte registriere dich auf unserer neuen Firmen-App von Rasen Maierhold:\n${registrationLink}`;
 
     console.log('Sending SMS via Twilio...');
 

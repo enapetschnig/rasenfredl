@@ -6,13 +6,31 @@ import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Clock, Plus } from "lucide-react";
+import { Clock } from "lucide-react";
+import { calculateAutoLunchBreak } from "@/lib/workingHours";
 
 type Project = {
   id: string;
   name: string;
   plz: string;
 };
+
+interface ExistingBlock {
+  start: number; // minutes from midnight
+  end: number;
+}
+
+interface FreeBlock {
+  startTime: string;
+  endTime: string;
+  hours: number;
+}
+
+interface BlockFormData {
+  locationType: "baustelle" | "werkstatt";
+  projectId: string;
+  description: string;
+}
 
 interface FillRemainingHoursDialogProps {
   open: boolean;
@@ -21,29 +39,81 @@ interface FillRemainingHoursDialogProps {
   bookedHours: number;
   targetHours: number;
   projects: Project[];
-  lastEndTime: string | null;
-  onSubmit: (projectId: string | null, locationType: string, description: string, startTime: string, endTime: string) => Promise<void>;
+  existingEntries: { start_time: string; end_time: string }[];
+  selectedDate: string;
+  onSubmit: (blocks: { projectId: string | null; locationType: string; description: string; startTime: string; endTime: string }[]) => Promise<void>;
 }
 
-const calculateNextStartTime = (lastEndTime: string | null): string => {
-  if (!lastEndTime) return "07:00";
-  
-  const [hours, minutes] = lastEndTime.split(":").map(Number);
-  const totalMinutes = hours * 60 + minutes + 30; // 30 min after last entry
-  const newHours = Math.floor(totalMinutes / 60);
-  const newMinutes = totalMinutes % 60;
-  
-  return `${newHours.toString().padStart(2, "0")}:${newMinutes.toString().padStart(2, "0")}`;
-};
+function timeToMinutes(time: string): number {
+  const [h, m] = time.split(":").map(Number);
+  return h * 60 + m;
+}
 
-const calculateEndTime = (startTime: string, hours: number): string => {
-  const [startH, startM] = startTime.split(":").map(Number);
-  const totalMinutes = startH * 60 + startM + Math.round(hours * 60);
-  const endHours = Math.floor(totalMinutes / 60);
-  const endMinutes = totalMinutes % 60;
-  
-  return `${endHours.toString().padStart(2, "0")}:${endMinutes.toString().padStart(2, "0")}`;
-};
+function minutesToTime(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
+}
+
+function calculateFreeBlocks(
+  existingEntries: { start_time: string; end_time: string }[],
+  selectedDate: string
+): FreeBlock[] {
+  const dateObj = new Date(selectedDate + "T00:00:00");
+  const dayOfWeek = dateObj.getDay();
+  const isFriday = dayOfWeek === 5;
+
+  const dayStart = timeToMinutes("07:00");
+  const dayEnd = isFriday ? timeToMinutes("12:00") : timeToMinutes("16:30");
+  const lunchStart = timeToMinutes("12:00");
+  const lunchEnd = timeToMinutes("13:00");
+
+  // Collect all occupied intervals
+  const occupied: ExistingBlock[] = existingEntries.map((e) => ({
+    start: timeToMinutes(e.start_time.substring(0, 5)),
+    end: timeToMinutes(e.end_time.substring(0, 5)),
+  }));
+
+  // Add lunch break as occupied (on non-Friday days if day spans lunch)
+  if (!isFriday && dayEnd > lunchEnd) {
+    occupied.push({ start: lunchStart, end: lunchEnd });
+  }
+
+  // Sort by start time
+  occupied.sort((a, b) => a.start - b.start);
+
+  // Find free gaps
+  const freeBlocks: FreeBlock[] = [];
+  let current = dayStart;
+
+  for (const block of occupied) {
+    if (block.start > current) {
+      const gapStart = current;
+      const gapEnd = block.start;
+      if (gapEnd - gapStart >= 15) {
+        const startTime = minutesToTime(gapStart);
+        const endTime = minutesToTime(gapEnd);
+        const pause = calculateAutoLunchBreak(startTime, endTime);
+        const hours = (gapEnd - gapStart - pause) / 60;
+        freeBlocks.push({ startTime, endTime, hours });
+      }
+    }
+    current = Math.max(current, block.end);
+  }
+
+  // Gap after last occupied block until day end
+  if (current < dayEnd) {
+    const startTime = minutesToTime(current);
+    const endTime = minutesToTime(dayEnd);
+    const pause = calculateAutoLunchBreak(startTime, endTime);
+    const hours = (dayEnd - current - pause) / 60;
+    if (hours > 0.25) {
+      freeBlocks.push({ startTime, endTime, hours });
+    }
+  }
+
+  return freeBlocks;
+}
 
 export const FillRemainingHoursDialog = ({
   open,
@@ -52,52 +122,66 @@ export const FillRemainingHoursDialog = ({
   bookedHours,
   targetHours,
   projects,
-  lastEndTime,
+  existingEntries,
+  selectedDate,
   onSubmit,
 }: FillRemainingHoursDialogProps) => {
-  const [locationType, setLocationType] = useState<"baustelle" | "werkstatt">("werkstatt");
-  const [projectId, setProjectId] = useState("");
-  const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [blockForms, setBlockForms] = useState<BlockFormData[]>([]);
 
-  const startTime = calculateNextStartTime(lastEndTime);
-  const endTime = calculateEndTime(startTime, remainingHours);
+  const freeBlocks = calculateFreeBlocks(existingEntries, selectedDate);
 
-  // Reset form when dialog opens
+  // Reset forms when dialog opens
   useEffect(() => {
     if (open) {
-      setLocationType("werkstatt");
-      setProjectId("");
-      setDescription("");
+      setBlockForms(
+        freeBlocks.map(() => ({
+          locationType: "werkstatt" as const,
+          projectId: "",
+          description: "",
+        }))
+      );
     }
   }, [open]);
+
+  const updateBlockForm = (index: number, updates: Partial<BlockFormData>) => {
+    setBlockForms((prev) =>
+      prev.map((form, i) => (i === index ? { ...form, ...updates } : form))
+    );
+  };
 
   const handleSubmit = async () => {
     setSubmitting(true);
     try {
-      await onSubmit(
-        locationType === "werkstatt" ? null : (projectId || null),
-        locationType,
-        description,
-        startTime,
-        endTime
-      );
+      const blocks = freeBlocks.map((block, i) => {
+        const form = blockForms[i] || { locationType: "werkstatt", projectId: "", description: "" };
+        return {
+          projectId: form.locationType === "werkstatt" ? null : form.projectId || null,
+          locationType: form.locationType,
+          description: form.description,
+          startTime: block.startTime,
+          endTime: block.endTime,
+        };
+      });
+      await onSubmit(blocks);
       onOpenChange(false);
     } finally {
       setSubmitting(false);
     }
   };
 
+  const totalFreeHours = freeBlocks.reduce((sum, b) => sum + b.hours, 0);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Clock className="h-5 w-5" />
             Reststunden auffüllen
           </DialogTitle>
           <DialogDescription>
-            Fehlende Stunden automatisch buchen
+            Freie Zeitblöcke automatisch buchen
           </DialogDescription>
         </DialogHeader>
 
@@ -113,93 +197,94 @@ export const FillRemainingHoursDialog = ({
               <span className="font-medium">{targetHours.toFixed(2)} h</span>
             </div>
             <div className="border-t pt-2 flex justify-between">
-              <span className="font-medium">Reststunden:</span>
+              <span className="font-medium">Verfügbare Blöcke:</span>
               <Badge variant="secondary" className="text-lg font-bold px-3 py-1">
-                {remainingHours.toFixed(2)} h
+                {totalFreeHours.toFixed(2)} h
               </Badge>
             </div>
           </div>
 
-          {/* Time preview */}
-          <div className="bg-primary/5 border border-primary/20 rounded-lg p-3 text-sm">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Wird gebucht:</span>
-              <span className="font-mono font-medium">{startTime} - {endTime}</span>
-            </div>
-          </div>
+          {freeBlocks.length === 0 ? (
+            <p className="text-center text-muted-foreground py-4">
+              Keine freien Zeitblöcke verfügbar
+            </p>
+          ) : (
+            <div className="space-y-4">
+              {freeBlocks.map((block, index) => (
+                <div key={index} className="border rounded-lg p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono font-medium text-sm">
+                      {block.startTime} – {block.endTime}
+                    </span>
+                    <Badge variant="outline">{block.hours.toFixed(2)} h</Badge>
+                  </div>
 
-          {/* Location selection */}
-          <div className="space-y-2">
-            <Label>Arbeitsort</Label>
-            <RadioGroup 
-              value={locationType} 
-              onValueChange={(value: "baustelle" | "werkstatt") => setLocationType(value)} 
-              className="grid grid-cols-2 gap-4"
-            >
-              <div>
-                <RadioGroupItem value="baustelle" id="fill-baustelle" className="peer sr-only" />
-                <Label 
-                  htmlFor="fill-baustelle" 
-                  className="flex h-12 cursor-pointer items-center justify-center rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent peer-data-[state=checked]:border-primary text-sm"
-                >
-                  🏗️ Baustelle
-                </Label>
-              </div>
-              <div>
-                <RadioGroupItem value="werkstatt" id="fill-werkstatt" className="peer sr-only" />
-                <Label 
-                  htmlFor="fill-werkstatt" 
-                  className="flex h-12 cursor-pointer items-center justify-center rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent peer-data-[state=checked]:border-primary text-sm"
-                >
-                  🔧 Werkstatt
-                </Label>
-              </div>
-            </RadioGroup>
-          </div>
+                  {/* Location selection */}
+                  <RadioGroup
+                    value={blockForms[index]?.locationType || "werkstatt"}
+                    onValueChange={(value: "baustelle" | "werkstatt") =>
+                      updateBlockForm(index, { locationType: value })
+                    }
+                    className="grid grid-cols-2 gap-2"
+                  >
+                    <div>
+                      <RadioGroupItem value="baustelle" id={`fill-b-${index}`} className="peer sr-only" />
+                      <Label
+                        htmlFor={`fill-b-${index}`}
+                        className="flex h-10 cursor-pointer items-center justify-center rounded-md border-2 border-muted bg-popover hover:bg-accent peer-data-[state=checked]:border-primary text-sm"
+                      >
+                        Baustelle
+                      </Label>
+                    </div>
+                    <div>
+                      <RadioGroupItem value="werkstatt" id={`fill-w-${index}`} className="peer sr-only" />
+                      <Label
+                        htmlFor={`fill-w-${index}`}
+                        className="flex h-10 cursor-pointer items-center justify-center rounded-md border-2 border-muted bg-popover hover:bg-accent peer-data-[state=checked]:border-primary text-sm"
+                      >
+                        Lager
+                      </Label>
+                    </div>
+                  </RadioGroup>
 
-          {/* Project selection - only for Baustelle */}
-          {locationType === "baustelle" && (
-            <div className="space-y-2">
-              <Label>Projekt <span className="text-muted-foreground font-normal">(optional)</span></Label>
-              <Select value={projectId} onValueChange={setProjectId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Projekt auswählen" />
-                </SelectTrigger>
-                <SelectContent>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name} ({p.plz})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  {/* Project selection */}
+                  {blockForms[index]?.locationType === "baustelle" && (
+                    <Select
+                      value={blockForms[index]?.projectId || ""}
+                      onValueChange={(v) => updateBlockForm(index, { projectId: v })}
+                    >
+                      <SelectTrigger className="h-10">
+                        <SelectValue placeholder="Projekt wählen (optional)" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {projects.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.name} ({p.plz})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+
+                  {/* Description */}
+                  <Input
+                    value={blockForms[index]?.description || ""}
+                    onChange={(e) => updateBlockForm(index, { description: e.target.value })}
+                    placeholder="Beschreibung (optional)"
+                    className="h-10"
+                  />
+                </div>
+              ))}
             </div>
           )}
 
-          {/* Description */}
-          <div className="space-y-2">
-            <Label>Beschreibung <span className="text-muted-foreground font-normal">(optional)</span></Label>
-            <Input
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="z.B. Werkstattarbeit, Aufräumen..."
-            />
-          </div>
-
           {/* Actions */}
           <div className="flex gap-2 justify-end pt-2">
-            <Button 
-              variant="outline" 
-              onClick={() => onOpenChange(false)}
-              disabled={submitting}
-            >
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
               Abbrechen
             </Button>
-            <Button 
-              onClick={handleSubmit} 
-              disabled={submitting || remainingHours <= 0}
-            >
-              {submitting ? "Wird gebucht..." : "Reststunden buchen"}
+            <Button onClick={handleSubmit} disabled={submitting || freeBlocks.length === 0}>
+              {submitting ? "Wird gebucht..." : `${freeBlocks.length} Block${freeBlocks.length !== 1 ? "e" : ""} buchen`}
             </Button>
           </div>
         </div>

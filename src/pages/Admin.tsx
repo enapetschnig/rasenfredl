@@ -15,10 +15,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
-import { format } from "date-fns";
+import { format, isSameDay, parseISO } from "date-fns";
+import { de } from "date-fns/locale";
+import * as XLSX from "xlsx-js-style";
+import { calculateHoursWithAutoLunch } from "@/lib/workingHours";
 import EmployeeDocumentsManager from "@/components/EmployeeDocumentsManager";
 import LeaveManagement from "@/components/LeaveManagement";
-import TimeAccountManagement from "@/components/TimeAccountManagement";
 
 type Profile = {
   id: string;
@@ -94,6 +96,7 @@ export default function Admin() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<Profile | null>(null);
+  const [deletingUser, setDeletingUser] = useState(false);
 
   // App settings states
   const [regiereportEmail, setRegiereportEmail] = useState("");
@@ -899,6 +902,57 @@ export default function Admin() {
           </Card>
         </section>
 
+        {/* ===== URLAUBSVERWALTUNG ===== */}
+        <section>
+          <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+            <Calendar className="h-6 w-6" />
+            Urlaubsverwaltung
+          </h2>
+          <LeaveManagement profiles={profiles.filter(p => p.is_active)} />
+        </section>
+
+        {/* ===== EINSTELLUNGEN SEKTION ===== */}
+        <section>
+          <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+            <Settings className="h-6 w-6" />
+            Einstellungen
+          </h2>
+          <Card>
+            <CardHeader>
+              <CardTitle>E-Mail-Einstellungen</CardTitle>
+              <CardDescription>
+                Konfigurieren Sie die E-Mail-Adressen für automatische Benachrichtigungen
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="disturbance-email">Regiebericht E-Mail-Empfänger</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="disturbance-email"
+                    type="email"
+                    placeholder="office@example.com"
+                    value={regiereportEmail}
+                    onChange={(e) => setRegiereportEmail(e.target.value)}
+                    disabled={loadingSettings}
+                    className="flex-1"
+                  />
+                  <Button
+                    onClick={saveRegiereportEmail}
+                    disabled={savingSettings || loadingSettings}
+                  >
+                    <Save className="h-4 w-4 mr-2" />
+                    {savingSettings ? "Speichert..." : "Speichern"}
+                  </Button>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Diese E-Mail-Adresse erhält alle Regieberichte als Kopie.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </section>
+
       </main>
 
       {/* Employee Detail Dialog */}
@@ -1279,11 +1333,16 @@ export default function Admin() {
             <AlertDialogDescription>
               Möchten Sie {userToDelete?.vorname} {userToDelete?.nachname} wirklich löschen?
               <br /><br />
-              <strong>Hinweis:</strong> Alle Arbeitszeiterfassungen und Dokumente bleiben vorerst gespeichert.
+              <strong>Folgende Schritte werden durchgeführt:</strong>
+              <br />1. Excel-Backup aller Zeiteinträge wird erstellt und heruntergeladen
+              <br />2. Excel-Backup wird im Storage gesichert
+              <br />3. Zeiteinträge werden anonymisiert (Name in Notizen gespeichert)
+              <br />4. Störungsberichte werden gelöscht
+              <br />5. Profil wird deaktiviert und gelöscht
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => {
+            <AlertDialogCancel disabled={deletingUser} onClick={() => {
               setDeleteConfirmOpen(false);
               setUserToDelete(null);
             }}>
@@ -1291,41 +1350,140 @@ export default function Admin() {
             </AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={async () => {
-                if (!userToDelete) return;
-                
+              disabled={deletingUser}
+              onClick={async (e) => {
+                e.preventDefault(); // Prevent auto-close
+                if (!userToDelete || deletingUser) return;
+                setDeletingUser(true);
+
+                const userName = `${userToDelete.vorname} ${userToDelete.nachname}`;
+
                 try {
-                  // Delete the employee record if exists
-                  const { error: empError } = await supabase
-                    .from("employees")
-                    .delete()
-                    .eq("user_id", userToDelete.id);
-                  
-                  if (empError) {
-                    console.error("Employee delete error:", empError);
+                  // Step 1: Fetch ALL time entries for the user (from March 2026 onwards)
+                  const { data: allEntries } = await supabase
+                    .from("time_entries")
+                    .select("*, projects(name)")
+                    .eq("user_id", userToDelete.id)
+                    .gte("datum", "2026-03-01")
+                    .order("datum");
+
+                  // Step 2: Create Excel with monthly sheets
+                  const wb = XLSX.utils.book_new();
+                  const monthNames = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+
+                  if (allEntries && allEntries.length > 0) {
+                    // Group entries by month
+                    const entriesByMonth: Record<string, any[]> = {};
+                    allEntries.forEach((entry: any) => {
+                      const key = entry.datum.substring(0, 7); // "YYYY-MM"
+                      if (!entriesByMonth[key]) entriesByMonth[key] = [];
+                      entriesByMonth[key].push(entry);
+                    });
+
+                    // Create a sheet for each month
+                    Object.keys(entriesByMonth).sort().forEach((monthKey) => {
+                      const entries = entriesByMonth[monthKey];
+                      const [y, m] = monthKey.split("-").map(Number);
+                      const sheetName = `${monthNames[m - 1]} ${y}`;
+
+                      const sheetData: any[][] = [
+                        ["Datum", "Beginn", "Ende", "Stunden", "Ort", "Projekt", "Tätigkeit", "Notizen"],
+                      ];
+
+                      entries.forEach((entry: any) => {
+                        const hours = entry.start_time && entry.end_time
+                          ? calculateHoursWithAutoLunch(entry.start_time.substring(0, 5), entry.end_time.substring(0, 5))
+                          : entry.stunden;
+                        sheetData.push([
+                          entry.datum,
+                          entry.start_time?.substring(0, 5) || "",
+                          entry.end_time?.substring(0, 5) || "",
+                          hours.toFixed(2),
+                          entry.location_type || "",
+                          entry.projects?.name || "",
+                          entry.taetigkeit || "",
+                          entry.notizen || "",
+                        ]);
+                      });
+
+                      const ws = XLSX.utils.aoa_to_sheet(sheetData);
+                      ws["!cols"] = [
+                        { wch: 12 }, { wch: 8 }, { wch: 8 }, { wch: 8 },
+                        { wch: 12 }, { wch: 20 }, { wch: 20 }, { wch: 30 },
+                      ];
+                      XLSX.utils.book_append_sheet(wb, ws, sheetName.substring(0, 31));
+                    });
+                  } else {
+                    // Empty sheet if no entries
+                    const ws = XLSX.utils.aoa_to_sheet([["Keine Einträge vorhanden"]]);
+                    XLSX.utils.book_append_sheet(wb, ws, "Leer");
                   }
 
-                  // Delete user roles
-                  const { error: roleError } = await supabase
-                    .from("user_roles")
-                    .delete()
-                    .eq("user_id", userToDelete.id);
-                  
-                  if (roleError) {
-                    console.error("Role delete error:", roleError);
+                  // Step 3: Download Excel locally
+                  const fileName = `Backup_${userName.replace(/\s+/g, "_")}_${format(new Date(), "yyyy-MM-dd")}.xlsx`;
+                  XLSX.writeFile(wb, fileName);
+
+                  // Step 4: Upload Excel to deleted-users storage bucket
+                  try {
+                    const xlsxBuffer = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+                    const blob = new Blob([xlsxBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+                    await supabase.storage
+                      .from("deleted-users")
+                      .upload(fileName, blob, { contentType: blob.type, upsert: true });
+                  } catch (uploadErr) {
+                    console.warn("Backup upload to storage failed (bucket may not exist):", uploadErr);
                   }
 
-                  // Delete the profile
+                  // Step 5: Anonymize time entries - set user_id to NULL, store name in notes
+                  if (allEntries && allEntries.length > 0) {
+                    const { error: anonymizeErr } = await supabase.rpc('anonymize_user_time_entries', {
+                      p_user_id: userToDelete.id,
+                      p_user_name: userName,
+                    });
+
+                    // Fallback: if RPC doesn't exist, update entries manually
+                    if (anonymizeErr) {
+                      console.warn("RPC not available, updating entries manually:", anonymizeErr);
+                      for (const entry of allEntries) {
+                        const existingNotes = entry.notizen ? `${entry.notizen} | ` : "";
+                        await supabase
+                          .from("time_entries")
+                          .update({
+                            notizen: `${existingNotes}[Gelöschter MA: ${userName}]`,
+                          })
+                          .eq("id", entry.id);
+                      }
+                    }
+                  }
+
+                  // Step 6: Delete disturbances
+                  const { error: distError } = await supabase
+                    .from("disturbances")
+                    .delete()
+                    .eq("user_id", userToDelete.id);
+                  if (distError) console.warn("Disturbance delete:", distError);
+
+                  // Step 7: Delete employee record
+                  await supabase.from("employees").delete().eq("user_id", userToDelete.id);
+
+                  // Step 8: Delete user roles
+                  await supabase.from("user_roles").delete().eq("user_id", userToDelete.id);
+
+                  // Step 9: Delete leave balances
+                  await supabase.from("leave_balances").delete().eq("user_id", userToDelete.id);
+
+                  // Step 10: Deactivate and delete profile
+                  await supabase.from("profiles").update({ is_active: false }).eq("id", userToDelete.id);
                   const { error: profileError } = await supabase
                     .from("profiles")
                     .delete()
                     .eq("id", userToDelete.id);
-                  
+
                   if (profileError) throw profileError;
 
                   toast({
                     title: "Benutzer gelöscht",
-                    description: `${userToDelete.vorname} ${userToDelete.nachname} wurde erfolgreich gelöscht.`,
+                    description: `${userName} wurde gelöscht. Excel-Backup wurde heruntergeladen.`,
                   });
 
                   fetchUsers({ silent: true });
@@ -1337,77 +1495,18 @@ export default function Admin() {
                     description: error.message || "Benutzer konnte nicht gelöscht werden",
                   });
                 }
-                
+
+                setDeletingUser(false);
                 setDeleteConfirmOpen(false);
                 setUserToDelete(null);
               }}
             >
-              Ja, löschen
+              {deletingUser ? "Wird gelöscht..." : "Ja, löschen"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* ===== URLAUBSVERWALTUNG ===== */}
-      <section className="mt-8">
-        <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-          <Calendar className="h-6 w-6" />
-          Urlaubsverwaltung
-        </h2>
-        <LeaveManagement profiles={profiles.filter(p => p.is_active)} />
-      </section>
-
-      {/* ===== ZEITKONTO ===== */}
-      <section className="mt-8">
-        <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-          <Clock className="h-6 w-6" />
-          Zeitkonten & Zeitausgleich
-        </h2>
-        <TimeAccountManagement profiles={profiles.filter(p => p.is_active)} />
-      </section>
-
-      {/* ===== EINSTELLUNGEN SEKTION ===== */}
-      <section className="mt-8">
-        <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-          <Settings className="h-6 w-6" />
-          Einstellungen
-        </h2>
-        
-        <Card>
-          <CardHeader>
-            <CardTitle>E-Mail-Einstellungen</CardTitle>
-            <CardDescription>
-              Konfigurieren Sie die E-Mail-Adressen für automatische Benachrichtigungen
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="disturbance-email">Regiebericht E-Mail-Empfänger</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="disturbance-email"
-                  type="email"
-                  placeholder="office@example.com"
-                  value={regiereportEmail}
-                  onChange={(e) => setRegiereportEmail(e.target.value)}
-                  disabled={loadingSettings}
-                  className="flex-1"
-                />
-                <Button 
-                  onClick={saveRegiereportEmail} 
-                  disabled={savingSettings || loadingSettings}
-                >
-                  <Save className="h-4 w-4 mr-2" />
-                  {savingSettings ? "Speichert..." : "Speichern"}
-                </Button>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                Diese E-Mail-Adresse erhält alle Regieberichte als Kopie.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </section>
     </div>
   );
 }
