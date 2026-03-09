@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Calendar, Clock, User, Mail, Phone, MapPin, FileText, Package, Plus, Trash2, ChevronDown, Check, X, Users } from "lucide-react";
+import { Calendar, Clock, User, Mail, Phone, MapPin, FileText, Package, Plus, Trash2, ChevronDown, Check, X, Users, Receipt, ExternalLink } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { calculateAutoLunchBreak } from "@/lib/workingHours";
@@ -34,6 +34,27 @@ type ProfileOption = {
   vorname: string;
   nachname: string;
 };
+
+type DeliveryNoteMaterial = {
+  id: string;
+  material: string;
+  menge: string;
+  einheit: string;
+};
+
+type DeliveryNoteEntry = {
+  id: string;
+  materials: DeliveryNoteMaterial[];
+  notizen: string;
+};
+
+type ExistingDeliveryNote = {
+  id: string;
+  datum: string;
+  materialCount: number;
+};
+
+const EINHEITEN = ["Stk", "kg", "m", "m²", "m³", "Liter", "Palette", "Sack", "Rolle"];
 
 type DisturbanceFormProps = {
   open: boolean;
@@ -76,6 +97,8 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
   const [materials, setMaterials] = useState<MaterialEntry[]>([]);
   const [workers, setWorkers] = useState<WorkerEntry[]>([]);
   const [allProfiles, setAllProfiles] = useState<ProfileOption[]>([]);
+  const [deliveryNotes, setDeliveryNotes] = useState<DeliveryNoteEntry[]>([]);
+  const [existingDeliveryNotes, setExistingDeliveryNotes] = useState<ExistingDeliveryNote[]>([]);
 
   useEffect(() => {
     // Load all active profiles for worker selection
@@ -99,6 +122,8 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
       });
       loadExistingMaterials(editData.id);
       loadExistingWorkers(editData.id, editData.start_time.slice(0, 5), editData.end_time.slice(0, 5));
+      loadExistingDeliveryNotes(editData.id);
+      setDeliveryNotes([]);
     } else {
       setFormData({
         datum: format(new Date(), "yyyy-MM-dd"),
@@ -113,6 +138,8 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
         notizen: "",
       });
       setMaterials([]);
+      setDeliveryNotes([]);
+      setExistingDeliveryNotes([]);
       // Initialize with current user as main worker
       supabase.auth.getUser().then(({ data: { user } }) => {
         if (user) {
@@ -163,6 +190,35 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
     }
   };
 
+  const loadExistingDeliveryNotes = async (disturbanceId: string) => {
+    const { data: dnData } = await supabase
+      .from("delivery_notes")
+      .select("id, datum")
+      .eq("disturbance_id", disturbanceId)
+      .order("datum", { ascending: false });
+
+    if (dnData && dnData.length > 0) {
+      const dnIds = dnData.map(d => d.id);
+      const { data: matCounts } = await supabase
+        .from("delivery_note_materials")
+        .select("delivery_note_id")
+        .in("delivery_note_id", dnIds);
+
+      const countMap = new Map<string, number>();
+      matCounts?.forEach(m => {
+        countMap.set(m.delivery_note_id, (countMap.get(m.delivery_note_id) || 0) + 1);
+      });
+
+      setExistingDeliveryNotes(dnData.map(d => ({
+        id: d.id,
+        datum: d.datum,
+        materialCount: countMap.get(d.id) || 0,
+      })));
+    } else {
+      setExistingDeliveryNotes([]);
+    }
+  };
+
   const calculateHours = (): number => {
     const [startH, startM] = formData.startTime.split(":").map(Number);
     const [endH, endM] = formData.endTime.split(":").map(Number);
@@ -181,6 +237,44 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
 
   const updateMaterial = (id: string, field: "material" | "menge", value: string) => {
     setMaterials(materials.map(m => m.id === id ? { ...m, [field]: value } : m));
+  };
+
+  // Delivery note helpers
+  const addDeliveryNote = () => {
+    setDeliveryNotes([...deliveryNotes, {
+      id: crypto.randomUUID(),
+      materials: [{ id: crypto.randomUUID(), material: "", menge: "", einheit: "" }],
+      notizen: "",
+    }]);
+  };
+
+  const removeDeliveryNote = (dnId: string) => {
+    setDeliveryNotes(deliveryNotes.filter(dn => dn.id !== dnId));
+  };
+
+  const updateDeliveryNoteNotizen = (dnId: string, notizen: string) => {
+    setDeliveryNotes(deliveryNotes.map(dn => dn.id === dnId ? { ...dn, notizen } : dn));
+  };
+
+  const addDeliveryNoteMaterial = (dnId: string) => {
+    setDeliveryNotes(deliveryNotes.map(dn => dn.id === dnId
+      ? { ...dn, materials: [...dn.materials, { id: crypto.randomUUID(), material: "", menge: "", einheit: "" }] }
+      : dn
+    ));
+  };
+
+  const removeDeliveryNoteMaterial = (dnId: string, matId: string) => {
+    setDeliveryNotes(deliveryNotes.map(dn => dn.id === dnId
+      ? { ...dn, materials: dn.materials.filter(m => m.id !== matId) }
+      : dn
+    ));
+  };
+
+  const updateDeliveryNoteMaterial = (dnId: string, matId: string, field: keyof DeliveryNoteMaterial, value: string) => {
+    setDeliveryNotes(deliveryNotes.map(dn => dn.id === dnId
+      ? { ...dn, materials: dn.materials.map(m => m.id === matId ? { ...m, [field]: value } : m) }
+      : dn
+    ));
   };
 
   const toggleWorkType = (workType: string) => {
@@ -358,6 +452,31 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
         );
       }
 
+      // Create new delivery notes
+      for (const dn of deliveryNotes) {
+        const validMats = dn.materials.filter(m => m.material.trim());
+        if (validMats.length === 0) continue;
+        const { data: newNote } = await supabase.from("delivery_notes").insert({
+          user_id: user.id,
+          datum: formData.datum,
+          kunde_name: formData.kundeName.trim(),
+          kunde_adresse: formData.kundeAdresse.trim() || null,
+          kunde_telefon: formData.kundeTelefon.trim() || null,
+          disturbance_id: editData.id,
+          notizen: dn.notizen.trim() || null,
+        }).select("id").single();
+        if (newNote) {
+          await supabase.from("delivery_note_materials").insert(
+            validMats.map(m => ({
+              delivery_note_id: newNote.id,
+              material: m.material.trim(),
+              menge: m.menge.trim() || null,
+              einheit: m.einheit || null,
+            }))
+          );
+        }
+      }
+
       toast({ title: "Erfolg", description: "Regiebericht wurde aktualisiert" });
       setSaving(false);
       onSuccess();
@@ -473,6 +592,31 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
             menge: m.menge.trim() || null,
           }))
         );
+      }
+
+      // Create delivery notes
+      for (const dn of deliveryNotes) {
+        const validMats = dn.materials.filter(m => m.material.trim());
+        if (validMats.length === 0) continue;
+        const { data: newNote } = await supabase.from("delivery_notes").insert({
+          user_id: user.id,
+          datum: formData.datum,
+          kunde_name: formData.kundeName.trim(),
+          kunde_adresse: formData.kundeAdresse.trim() || null,
+          kunde_telefon: formData.kundeTelefon.trim() || null,
+          disturbance_id: newDisturbance.id,
+          notizen: dn.notizen.trim() || null,
+        }).select("id").single();
+        if (newNote) {
+          await supabase.from("delivery_note_materials").insert(
+            validMats.map(m => ({
+              delivery_note_id: newNote.id,
+              material: m.material.trim(),
+              menge: m.menge.trim() || null,
+              einheit: m.einheit || null,
+            }))
+          );
+        }
       }
 
       toast({ title: "Erfolg", description: "Regiebericht wurde erfasst" });
@@ -863,6 +1007,124 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Delivery Notes Section */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-medium flex items-center gap-2">
+                  <Receipt className="h-4 w-4" />
+                  Lieferscheine (optional)
+                </h3>
+                <Button type="button" variant="outline" size="sm" onClick={addDeliveryNote}>
+                  <Plus className="h-4 w-4 mr-1" />
+                  Lieferschein
+                </Button>
+              </div>
+
+              {/* Existing delivery notes (edit mode) */}
+              {existingDeliveryNotes.length > 0 && (
+                <div className="space-y-1.5">
+                  {existingDeliveryNotes.map((edn) => (
+                    <div
+                      key={edn.id}
+                      className="flex items-center justify-between py-2 px-3 rounded-lg bg-muted/50 hover:bg-muted cursor-pointer transition-colors"
+                      onClick={() => window.open(`/delivery-notes/${edn.id}`, '_blank')}
+                    >
+                      <div className="flex items-center gap-2 text-sm">
+                        <Receipt className="h-3.5 w-3.5 text-primary" />
+                        <span>
+                          Lieferschein vom {new Date(edn.datum + 'T00:00:00').toLocaleDateString("de-DE")}
+                        </span>
+                        <span className="text-muted-foreground">
+                          ({edn.materialCount} Material{edn.materialCount !== 1 ? "ien" : ""})
+                        </span>
+                      </div>
+                      <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* New delivery note blocks */}
+              {deliveryNotes.map((dn, dnIdx) => (
+                <div key={dn.id} className="bg-muted/30 border rounded-lg p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">Neuer Lieferschein #{dnIdx + 1}</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-destructive hover:text-destructive"
+                      onClick={() => removeDeliveryNote(dn.id)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+
+                  {/* Materials for this delivery note */}
+                  <div className="space-y-2">
+                    {dn.materials.map((mat) => (
+                      <div key={mat.id} className="flex gap-1.5 items-start">
+                        <Input
+                          placeholder="Material"
+                          value={mat.material}
+                          onChange={(e) => updateDeliveryNoteMaterial(dn.id, mat.id, "material", e.target.value)}
+                          className="flex-1 h-10 text-sm"
+                        />
+                        <Input
+                          placeholder="Menge"
+                          value={mat.menge}
+                          onChange={(e) => updateDeliveryNoteMaterial(dn.id, mat.id, "menge", e.target.value)}
+                          className="w-16 h-10 text-sm"
+                        />
+                        <Select
+                          value={mat.einheit}
+                          onValueChange={(v) => updateDeliveryNoteMaterial(dn.id, mat.id, "einheit", v)}
+                        >
+                          <SelectTrigger className="w-20 h-10 text-sm">
+                            <SelectValue placeholder="Einh." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {EINHEITEN.map((e) => (
+                              <SelectItem key={e} value={e}>{e}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeDeliveryNoteMaterial(dn.id, mat.id)}
+                          className="text-destructive hover:text-destructive h-10 w-10"
+                          disabled={dn.materials.length <= 1}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => addDeliveryNoteMaterial(dn.id)}
+                      className="text-xs"
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      Material
+                    </Button>
+                  </div>
+
+                  <div>
+                    <Input
+                      placeholder="Notizen (optional)"
+                      value={dn.notizen}
+                      onChange={(e) => updateDeliveryNoteNotizen(dn.id, e.target.value)}
+                      className="h-10 text-sm"
+                    />
+                  </div>
+                </div>
+              ))}
             </div>
           </form>
         </div>
