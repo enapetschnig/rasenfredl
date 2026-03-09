@@ -22,10 +22,17 @@ type ProjectOption = {
   name: string;
 };
 
+type DisturbanceOption = {
+  id: string;
+  kunde_name: string;
+  datum: string;
+};
+
 type DeliveryNoteFormProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
+  initialDisturbanceId?: string;
   editData?: {
     id: string;
     datum: string;
@@ -33,16 +40,18 @@ type DeliveryNoteFormProps = {
     kunde_adresse: string | null;
     kunde_telefon: string | null;
     projekt_id: string | null;
+    disturbance_id?: string | null;
     notizen: string | null;
   } | null;
 };
 
 const EINHEITEN = ["Stk", "kg", "m", "m²", "m³", "Liter", "Palette", "Sack", "Rolle"];
 
-export const DeliveryNoteForm = ({ open, onOpenChange, onSuccess, editData }: DeliveryNoteFormProps) => {
+export const DeliveryNoteForm = ({ open, onOpenChange, onSuccess, initialDisturbanceId, editData }: DeliveryNoteFormProps) => {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [disturbances, setDisturbances] = useState<DisturbanceOption[]>([]);
 
   const [formData, setFormData] = useState({
     datum: format(new Date(), "yyyy-MM-dd"),
@@ -50,6 +59,7 @@ export const DeliveryNoteForm = ({ open, onOpenChange, onSuccess, editData }: De
     kundeAdresse: "",
     kundeTelefon: "",
     projektId: "",
+    disturbanceId: "",
     notizen: "",
   });
 
@@ -60,6 +70,8 @@ export const DeliveryNoteForm = ({ open, onOpenChange, onSuccess, editData }: De
   useEffect(() => {
     supabase.from("projects").select("id, name").eq("status", "aktiv").order("name")
       .then(({ data }) => { if (data) setProjects(data); });
+    supabase.from("disturbances").select("id, kunde_name, datum").order("datum", { ascending: false })
+      .then(({ data }) => { if (data) setDisturbances(data); });
   }, []);
 
   useEffect(() => {
@@ -70,6 +82,7 @@ export const DeliveryNoteForm = ({ open, onOpenChange, onSuccess, editData }: De
         kundeAdresse: editData.kunde_adresse || "",
         kundeTelefon: editData.kunde_telefon || "",
         projektId: editData.projekt_id || "",
+        disturbanceId: editData.disturbance_id || "",
         notizen: editData.notizen || "",
       });
       loadExistingMaterials(editData.id);
@@ -80,6 +93,7 @@ export const DeliveryNoteForm = ({ open, onOpenChange, onSuccess, editData }: De
         kundeAdresse: "",
         kundeTelefon: "",
         projektId: "",
+        disturbanceId: initialDisturbanceId || "",
         notizen: "",
       });
       setMaterials([{ id: crypto.randomUUID(), material: "", menge: "", einheit: "" }]);
@@ -140,6 +154,7 @@ export const DeliveryNoteForm = ({ open, onOpenChange, onSuccess, editData }: De
       kunde_adresse: formData.kundeAdresse.trim() || null,
       kunde_telefon: formData.kundeTelefon.trim() || null,
       projekt_id: formData.projektId || null,
+      disturbance_id: formData.disturbanceId || null,
       notizen: formData.notizen.trim() || null,
     };
 
@@ -272,6 +287,26 @@ export const DeliveryNoteForm = ({ open, onOpenChange, onSuccess, editData }: De
                     <SelectItem value="none">Kein Projekt</SelectItem>
                     {projects.map((p) => (
                       <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* Disturbance */}
+            {disturbances.length > 0 && (
+              <div>
+                <Label>Regiebericht (optional)</Label>
+                <Select value={formData.disturbanceId} onValueChange={(v) => setFormData({ ...formData, disturbanceId: v === "none" ? "" : v })}>
+                  <SelectTrigger className="h-12 text-base">
+                    <SelectValue placeholder="Regiebericht zuordnen..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Kein Regiebericht</SelectItem>
+                    {disturbances.map((d) => (
+                      <SelectItem key={d.id} value={d.id}>
+                        {d.kunde_name} ({new Date(d.datum).toLocaleDateString("de-DE")})
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

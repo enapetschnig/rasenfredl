@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Calendar, User, Phone, MapPin, Edit, Trash2, Package, FolderKanban } from "lucide-react";
+import { Calendar, User, Phone, MapPin, Edit, Trash2, Package, FolderKanban, FileCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,7 @@ type DeliveryNote = {
   kunde_adresse: string | null;
   kunde_telefon: string | null;
   projekt_id: string | null;
+  disturbance_id: string | null;
   notizen: string | null;
   status: string;
   created_at: string;
@@ -40,6 +41,7 @@ const DeliveryNoteDetail = () => {
   const [note, setNote] = useState<DeliveryNote | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [projectName, setProjectName] = useState<string | null>(null);
+  const [disturbanceName, setDisturbanceName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
@@ -87,6 +89,17 @@ const DeliveryNoteDetail = () => {
       const { data: proj } = await supabase
         .from("projects").select("name").eq("id", data.projekt_id).single();
       if (proj) setProjectName(proj.name);
+    } else {
+      setProjectName(null);
+    }
+
+    // Load disturbance name
+    if (data.disturbance_id) {
+      const { data: dist } = await supabase
+        .from("disturbances").select("kunde_name").eq("id", data.disturbance_id).single();
+      if (dist) setDisturbanceName(dist.kunde_name);
+    } else {
+      setDisturbanceName(null);
     }
 
     setLoading(false);
@@ -216,6 +229,17 @@ const DeliveryNoteDetail = () => {
               <div>
                 <p className="text-xs text-muted-foreground flex items-center gap-1"><FolderKanban className="h-3 w-3" /> Projekt</p>
                 <p className="font-medium text-sm">{projectName}</p>
+              </div>
+            )}
+            {disturbanceName && note.disturbance_id && (
+              <div>
+                <p className="text-xs text-muted-foreground flex items-center gap-1"><FileCheck className="h-3 w-3" /> Regiebericht</p>
+                <p
+                  className="font-medium text-sm text-primary hover:underline cursor-pointer"
+                  onClick={() => navigate(`/disturbances/${note.disturbance_id}`)}
+                >
+                  {disturbanceName}
+                </p>
               </div>
             )}
           </CardContent>

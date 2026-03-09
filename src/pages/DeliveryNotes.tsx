@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Package, Plus, Calendar, User, Search, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -25,11 +25,16 @@ type DeliveryNote = {
 
 const DeliveryNotes = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
   const [notes, setNotes] = useState<DeliveryNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [filterLabel, setFilterLabel] = useState<string | null>(null);
+
+  const projectFilter = searchParams.get("project");
+  const disturbanceFilter = searchParams.get("disturbance");
 
   useEffect(() => {
     checkAuth();
@@ -46,10 +51,22 @@ const DeliveryNotes = () => {
 
   const fetchNotes = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("delivery_notes")
-      .select("*")
-      .order("datum", { ascending: false });
+
+    let query = supabase.from("delivery_notes").select("*").order("datum", { ascending: false });
+
+    if (projectFilter) {
+      query = query.eq("projekt_id", projectFilter);
+      // Load project name for filter label
+      const { data: proj } = await supabase.from("projects").select("name").eq("id", projectFilter).single();
+      if (proj) setFilterLabel(`Projekt: ${proj.name}`);
+    }
+    if (disturbanceFilter) {
+      query = query.eq("disturbance_id", disturbanceFilter);
+      const { data: dist } = await supabase.from("disturbances").select("kunde_name").eq("id", disturbanceFilter).single();
+      if (dist) setFilterLabel(`Regiebericht: ${dist.kunde_name}`);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       toast({ variant: "destructive", title: "Fehler", description: "Lieferscheine konnten nicht geladen werden" });
@@ -96,8 +113,13 @@ const DeliveryNotes = () => {
               Alle Lieferscheine
             </h2>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Material-Dokumentation
+              {filterLabel || "Material-Dokumentation"}
             </p>
+            {filterLabel && (
+              <Button variant="link" size="sm" className="px-0 h-auto text-xs" onClick={() => navigate("/delivery-notes")}>
+                Filter entfernen
+              </Button>
+            )}
           </div>
           <Button onClick={() => setShowForm(true)} className="gap-2 shrink-0">
             <Plus className="h-4 w-4" />
@@ -175,6 +197,7 @@ const DeliveryNotes = () => {
         open={showForm}
         onOpenChange={setShowForm}
         onSuccess={() => { setShowForm(false); fetchNotes(); }}
+        initialDisturbanceId={disturbanceFilter || undefined}
       />
     </div>
   );

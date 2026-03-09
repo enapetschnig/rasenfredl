@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, FileText, FileCheck, Package, Camera, ImagePlus, Lock } from "lucide-react";
+import { ArrowLeft, FileText, FileCheck, Package, Camera, ImagePlus, Lock, Receipt } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
@@ -20,6 +20,7 @@ const ProjectOverview = () => {
   const [projectName, setProjectName] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   const [materialCount, setMaterialCount] = useState(0);
+  const [deliveryNoteCount, setDeliveryNoteCount] = useState(0);
   const [categories, setCategories] = useState<DocumentCategory[]>([
     {
       type: "photos",
@@ -63,6 +64,7 @@ const ProjectOverview = () => {
     if (projectId) {
       fetchFileCounts();
       fetchMaterialCount();
+      fetchDeliveryNoteCount();
     }
   }, [projectId, isAdmin]);
 
@@ -103,6 +105,15 @@ const ProjectOverview = () => {
       .eq("project_id", projectId);
 
     setMaterialCount(count || 0);
+  };
+
+  const fetchDeliveryNoteCount = async () => {
+    if (!projectId) return;
+    const { count } = await supabase
+      .from("delivery_notes")
+      .select("*", { count: "exact", head: true })
+      .eq("projekt_id", projectId);
+    setDeliveryNoteCount(count || 0);
   };
 
   const fetchFileCounts = async () => {
@@ -207,6 +218,25 @@ const ProjectOverview = () => {
               </div>
               <CardTitle className="text-xl">Materialliste</CardTitle>
               <CardDescription>Verwendete Materialien dokumentieren</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button variant="outline" className="w-full">
+                Öffnen
+              </Button>
+            </CardContent>
+          </Card>
+          {/* Lieferscheine card */}
+          <Card
+            className="cursor-pointer hover:shadow-lg transition-shadow"
+            onClick={() => navigate(`/delivery-notes?project=${projectId}`)}
+          >
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="text-primary"><Receipt className="h-8 w-8" /></div>
+                <div className="text-2xl font-bold">{deliveryNoteCount}</div>
+              </div>
+              <CardTitle className="text-xl">Lieferscheine</CardTitle>
+              <CardDescription>Materiallieferungen dokumentieren</CardDescription>
             </CardHeader>
             <CardContent>
               <Button variant="outline" className="w-full">

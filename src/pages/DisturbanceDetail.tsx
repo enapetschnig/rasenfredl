@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Calendar, Clock, User, Mail, Phone, MapPin, Edit, Trash2, PenLine, Users, CheckCircle2, FileText } from "lucide-react";
+import { Calendar, Clock, User, Mail, Phone, MapPin, Edit, Trash2, PenLine, Users, CheckCircle2, FileText, Package, Plus, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ import { DisturbanceForm } from "@/components/DisturbanceForm";
 import { DisturbanceMaterials } from "@/components/DisturbanceMaterials";
 import { DisturbancePhotos } from "@/components/DisturbancePhotos";
 import { SignatureDialog } from "@/components/SignatureDialog";
+import { DeliveryNoteForm } from "@/components/DeliveryNoteForm";
 import { PageHeader } from "@/components/PageHeader";
 
 type Disturbance = {
@@ -62,6 +63,8 @@ const DisturbanceDetail = () => {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [autoOpenSignatureHandled, setAutoOpenSignatureHandled] = useState(false);
+  const [linkedDeliveryNotes, setLinkedDeliveryNotes] = useState<{ id: string; datum: string; kunde_name: string; materialCount: number }[]>([]);
+  const [showDeliveryNoteForm, setShowDeliveryNoteForm] = useState(false);
 
   useEffect(() => {
     checkAuthAndFetch();
@@ -141,6 +144,30 @@ const DisturbanceDetail = () => {
         setWorkers(workersWithNames);
       } else {
         setWorkers([]);
+      }
+
+      // Fetch linked delivery notes
+      const { data: dnData } = await supabase
+        .from("delivery_notes")
+        .select("id, datum, kunde_name")
+        .eq("disturbance_id", id)
+        .order("datum", { ascending: false });
+
+      if (dnData && dnData.length > 0) {
+        const dnIds = dnData.map(d => d.id);
+        const { data: matCounts } = await supabase
+          .from("delivery_note_materials")
+          .select("delivery_note_id")
+          .in("delivery_note_id", dnIds);
+
+        const countMap = new Map<string, number>();
+        matCounts?.forEach(m => {
+          countMap.set(m.delivery_note_id, (countMap.get(m.delivery_note_id) || 0) + 1);
+        });
+
+        setLinkedDeliveryNotes(dnData.map(d => ({ ...d, materialCount: countMap.get(d.id) || 0 })));
+      } else {
+        setLinkedDeliveryNotes([]);
       }
 
       if (searchParams.get('openSignature') === 'true' && !autoOpenSignatureHandled) {
@@ -441,6 +468,50 @@ const DisturbanceDetail = () => {
         {/* Materials */}
         <DisturbanceMaterials disturbanceId={disturbance.id} canEdit={canEdit || false} />
 
+        {/* Linked Delivery Notes */}
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2 text-muted-foreground uppercase tracking-wide">
+                <Package className="h-4 w-4" />
+                Lieferscheine ({linkedDeliveryNotes.length})
+              </CardTitle>
+              {canEdit && (
+                <Button variant="outline" size="sm" onClick={() => setShowDeliveryNoteForm(true)} className="gap-1">
+                  <Plus className="h-3.5 w-3.5" />
+                  Hinzufügen
+                </Button>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {linkedDeliveryNotes.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Keine Lieferscheine verknüpft</p>
+            ) : (
+              <div className="space-y-2">
+                {linkedDeliveryNotes.map((dn) => (
+                  <div
+                    key={dn.id}
+                    className="flex items-center justify-between py-2 px-3 rounded-lg bg-muted/50 hover:bg-muted cursor-pointer transition-colors"
+                    onClick={() => navigate(`/delivery-notes/${dn.id}`)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Package className="h-4 w-4 text-primary" />
+                      <div>
+                        <p className="text-sm font-medium">{dn.kunde_name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {format(new Date(dn.datum + 'T00:00:00'), "dd.MM.yyyy", { locale: de })} · {dn.materialCount} Material{dn.materialCount !== 1 ? "ien" : ""}
+                        </p>
+                      </div>
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Metadata (admin only) */}
         {isAdmin && (disturbance.profile_vorname || disturbance.profile_nachname) && (
           <Card className="bg-muted/30">
@@ -460,6 +531,13 @@ const DisturbanceDetail = () => {
         onOpenChange={setShowEditForm}
         onSuccess={() => { setShowEditForm(false); fetchDisturbance(); }}
         editData={disturbance}
+      />
+
+      <DeliveryNoteForm
+        open={showDeliveryNoteForm}
+        onOpenChange={setShowDeliveryNoteForm}
+        onSuccess={() => { setShowDeliveryNoteForm(false); fetchDisturbance(); }}
+        initialDisturbanceId={disturbance.id}
       />
 
       <SignatureDialog
