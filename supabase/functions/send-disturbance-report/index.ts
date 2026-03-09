@@ -51,11 +51,19 @@ interface Disturbance {
   unterschrift_kunde: string;
 }
 
+interface WorkerDetail {
+  name: string;
+  startTime: string;
+  endTime: string;
+  stunden: number;
+}
+
 interface ReportRequest {
   disturbance: Disturbance;
   materials: Material[];
   technicianNames?: string[];
   technicianName?: string; // Legacy support
+  workerDetails?: WorkerDetail[];
   photos?: Photo[];
 }
 
@@ -101,7 +109,7 @@ async function fetchImageAsBase64(url: string): Promise<string | null> {
 }
 
 async function generatePDF(data: ReportRequest & { technicians: string[] }, photoImages: (string | null)[]): Promise<string> {
-  const { disturbance, materials, technicians, photos } = data;
+  const { disturbance, materials, technicians, workerDetails, photos } = data;
 
   const { jsPDF } = await import("https://esm.sh/jspdf@2.5.2");
 
@@ -256,9 +264,52 @@ async function generatePDF(data: ReportRequest & { technicians: string[] }, phot
   doc.text(`${disturbance.stunden.toFixed(2)} h`, col2x + 2, boxY + 14);
   y = boxY + boxH + 4;
 
-  fieldLabel("Mitarbeiter");
-  fieldValue(technicians.join(", "), margin, cW);
-  y += 10;
+  // Worker table with individual times (or simple list if no details)
+  if (workerDetails && workerDetails.length > 0) {
+    y += 2;
+    fieldLabel("Mitarbeiter");
+    y += 5;
+
+    // Table header
+    const wc1 = cW * 0.45;
+    const wc2 = cW * 0.30;
+    const wc3 = cW * 0.25;
+    setFill(LGRAY);
+    doc.rect(margin, y - 3, cW, 7, "F");
+    setDraw({ r: 160, g: 160, b: 160 });
+    doc.setLineWidth(0.2);
+    doc.rect(margin, y - 3, cW, 7, "S");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    setTxt(BLACK);
+    doc.text("Mitarbeiter", margin + 2, y + 1);
+    doc.text("Arbeitszeit", margin + wc1 + 2, y + 1);
+    doc.text("Stunden", margin + wc1 + wc2 + 2, y + 1);
+    y += 7;
+
+    workerDetails.forEach((wd) => {
+      checkPage(8);
+      setDraw({ r: 200, g: 200, b: 200 });
+      doc.setLineWidth(0.1);
+      doc.line(margin, y + 4, margin + cW, y + 4);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      setTxt(BLACK);
+      doc.text(wd.name, margin + 2, y);
+      doc.text(`${wd.startTime} – ${wd.endTime}`, margin + wc1 + 2, y);
+      doc.text(`${wd.stunden.toFixed(2)} h`, margin + wc1 + wc2 + 2, y);
+      y += 7;
+    });
+
+    setDraw({ r: 160, g: 160, b: 160 });
+    doc.setLineWidth(0.3);
+    doc.line(margin, y, margin + cW, y);
+    y += 6;
+  } else {
+    fieldLabel("Mitarbeiter");
+    fieldValue(technicians.join(", "), margin, cW);
+    y += 10;
+  }
 
   // ── DURCHGEFÜHRTE ARBEITEN ──────────────────────────────────────────
   checkPage(40);
@@ -473,8 +524,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const token = authHeader.replace("Bearer ", "");
     const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
     if (authError || !user) {
+      console.error("Auth failed:", authError?.message, "token prefix:", token.substring(0, 20));
       return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
+        JSON.stringify({ error: `Auth fehlgeschlagen: ${authError?.message || "Kein User gefunden"}` }),
         { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
     }
@@ -488,7 +540,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
     // Use Resend REST API directly (no SDK import needed)
 
-    const { disturbance, materials, technicianNames, technicianName, photos }: ReportRequest = await req.json();
+    const { disturbance, materials, technicianNames, technicianName, workerDetails, photos }: ReportRequest = await req.json();
 
     // Backward compatibility + fallback
     const technicians = technicianNames?.length ? technicianNames : 
@@ -518,14 +570,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // Generate PDF (with fallback if generation fails)
     let pdfBase64: string | null = null;
     try {
-      pdfBase64 = await generatePDF({ disturbance, materials, technicians, photos }, photoImages);
+      pdfBase64 = await generatePDF({ disturbance, materials, technicians, workerDetails, photos }, photoImages);
       console.log("PDF generated successfully");
     } catch (pdfError) {
       console.error("PDF generation failed, sending email without PDF:", pdfError instanceof Error ? pdfError.message : String(pdfError));
     }
 
     // Generate simple email HTML
-    const emailHtml = generateEmailHtml({ disturbance, materials, technicians });
+    const emailHtml = generateEmailHtml({ disturbance, materials, technicians, workerDetails });
 
     // Fetch office email from settings with fallback
     const { data: setting } = await supabaseAdmin

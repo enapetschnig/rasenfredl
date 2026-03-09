@@ -345,8 +345,8 @@ export default function Index() {
           </Card>
 
           {/* Regieberichte - Für alle */}
-          <Card 
-            className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" 
+          <Card
+            className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50"
             onClick={() => navigate("/disturbances")}
           >
             <CardHeader className="space-y-2 pb-3">
@@ -363,6 +363,24 @@ export default function Index() {
             </CardContent>
           </Card>
 
+          {/* Lieferscheine - Für alle */}
+          <Card
+            className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50"
+            onClick={() => navigate("/delivery-notes")}
+          >
+            <CardHeader className="space-y-2 pb-3">
+              <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
+                <Receipt className="h-6 w-6 text-primary" />
+              </div>
+              <CardTitle className="text-lg sm:text-xl">Lieferscheine</CardTitle>
+              <CardDescription className="text-sm">
+                Materialien dokumentieren
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button className="w-full" size="sm" variant="outline">Lieferscheine öffnen</Button>
+            </CardContent>
+          </Card>
 
           {/* Meine Dokumente - Für Mitarbeiter */}
           {!isAdmin && (

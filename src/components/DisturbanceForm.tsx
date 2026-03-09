@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Calendar, Clock, User, Mail, Phone, MapPin, FileText, Package, Plus, Trash2, ChevronDown, Check, X } from "lucide-react";
+import { Calendar, Clock, User, Mail, Phone, MapPin, FileText, Package, Plus, Trash2, ChevronDown, Check, X, Users } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { calculateAutoLunchBreak } from "@/lib/workingHours";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -17,6 +19,20 @@ type MaterialEntry = {
   id: string;
   material: string;
   menge: string;
+};
+
+type WorkerEntry = {
+  userId: string;
+  name: string;
+  isMain: boolean;
+  startTime: string;
+  endTime: string;
+};
+
+type ProfileOption = {
+  id: string;
+  vorname: string;
+  nachname: string;
 };
 
 type DisturbanceFormProps = {
@@ -58,6 +74,14 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
   });
 
   const [materials, setMaterials] = useState<MaterialEntry[]>([]);
+  const [workers, setWorkers] = useState<WorkerEntry[]>([]);
+  const [allProfiles, setAllProfiles] = useState<ProfileOption[]>([]);
+
+  useEffect(() => {
+    // Load all active profiles for worker selection
+    supabase.from("profiles").select("id, vorname, nachname").eq("is_active", true)
+      .then(({ data }) => { if (data) setAllProfiles(data); });
+  }, []);
 
   useEffect(() => {
     if (editData) {
@@ -74,6 +98,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
         notizen: editData.notizen || "",
       });
       loadExistingMaterials(editData.id);
+      loadExistingWorkers(editData.id, editData.start_time.slice(0, 5), editData.end_time.slice(0, 5));
     } else {
       setFormData({
         datum: format(new Date(), "yyyy-MM-dd"),
@@ -88,8 +113,45 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
         notizen: "",
       });
       setMaterials([]);
+      // Initialize with current user as main worker
+      supabase.auth.getUser().then(({ data: { user } }) => {
+        if (user) {
+          supabase.from("profiles").select("vorname, nachname").eq("id", user.id).single()
+            .then(({ data: p }) => {
+              setWorkers([{
+                userId: user.id,
+                name: p ? `${p.vorname} ${p.nachname}`.trim() : "Ich",
+                isMain: true,
+                startTime: "08:00",
+                endTime: "10:00",
+              }]);
+            });
+        }
+      });
     }
   }, [editData, open]);
+
+  const loadExistingWorkers = async (disturbanceId: string, defaultStart: string, defaultEnd: string) => {
+    const { data: workersData } = await supabase
+      .from("disturbance_workers")
+      .select("user_id, is_main, start_time, end_time")
+      .eq("disturbance_id", disturbanceId);
+    if (workersData && workersData.length > 0) {
+      const userIds = workersData.map(w => w.user_id);
+      const { data: profiles } = await supabase
+        .from("profiles").select("id, vorname, nachname").in("id", userIds);
+      setWorkers(workersData.map(w => {
+        const p = profiles?.find(pr => pr.id === w.user_id);
+        return {
+          userId: w.user_id,
+          name: p ? `${p.vorname} ${p.nachname}`.trim() : "Unbekannt",
+          isMain: w.is_main,
+          startTime: w.start_time?.slice(0, 5) || defaultStart,
+          endTime: w.end_time?.slice(0, 5) || defaultEnd,
+        };
+      }));
+    }
+  };
 
   const loadExistingMaterials = async (disturbanceId: string) => {
     const { data } = await supabase
@@ -196,13 +258,33 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
         return;
       }
 
-      // Update time entry for this disturbance
+      // Update workers: delete existing, re-insert
+      await supabase.from("disturbance_workers").delete().eq("disturbance_id", editData.id);
+      for (const worker of workers) {
+        const wPause = calculateAutoLunchBreak(worker.startTime, worker.endTime);
+        const [wSH, wSM] = worker.startTime.split(":").map(Number);
+        const [wEH, wEM] = worker.endTime.split(":").map(Number);
+        const wStunden = Math.max(0, ((wEH * 60 + wEM) - (wSH * 60 + wSM) - wPause) / 60);
+
+        await supabase.from("disturbance_workers").insert({
+          disturbance_id: editData.id,
+          user_id: worker.userId,
+          is_main: worker.isMain,
+          start_time: worker.startTime,
+          end_time: worker.endTime,
+          pause_minutes: wPause,
+          stunden: parseFloat(wStunden.toFixed(2)),
+        });
+      }
+
+      // Update time entry for this disturbance (main user only)
+      const mainWorker = workers.find(w => w.isMain);
       await supabase
         .from("time_entries")
         .update({
           datum: formData.datum,
-          start_time: formData.startTime,
-          end_time: formData.endTime,
+          start_time: mainWorker?.startTime || formData.startTime,
+          end_time: mainWorker?.endTime || formData.endTime,
           pause_minutes: pauseMinutes,
           stunden,
           taetigkeit: `Regiebericht: ${formData.kundeName.trim()}`,
@@ -241,30 +323,40 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
         return;
       }
 
-      // Insert time entry directly (bypasses RLS issues, works for own entries)
-      const { error: timeError } = await supabase.from("time_entries").insert({
-        user_id: user.id,
-        datum: formData.datum,
-        start_time: formData.startTime,
-        end_time: formData.endTime,
-        pause_minutes: pauseMinutes,
-        stunden,
-        project_id: null,
-        disturbance_id: newDisturbance.id,
-        taetigkeit: `Regiebericht: ${formData.kundeName.trim()}`,
-        location_type: "baustelle",
-      });
+      // Insert workers with individual times
+      for (const worker of workers) {
+        const wPause = calculateAutoLunchBreak(worker.startTime, worker.endTime);
+        const [wSH, wSM] = worker.startTime.split(":").map(Number);
+        const [wEH, wEM] = worker.endTime.split(":").map(Number);
+        const wStunden = Math.max(0, ((wEH * 60 + wEM) - (wSH * 60 + wSM) - wPause) / 60);
 
-      if (timeError) {
-        console.error("Time entry creation failed:", timeError);
+        await supabase.from("disturbance_workers").insert({
+          disturbance_id: newDisturbance.id,
+          user_id: worker.userId,
+          is_main: worker.isMain,
+          start_time: worker.startTime,
+          end_time: worker.endTime,
+          pause_minutes: wPause,
+          stunden: parseFloat(wStunden.toFixed(2)),
+        });
+
+        // Create time entry for each worker (only for main user due to RLS)
+        if (worker.userId === user.id) {
+          const { error: timeError } = await supabase.from("time_entries").insert({
+            user_id: worker.userId,
+            datum: formData.datum,
+            start_time: worker.startTime,
+            end_time: worker.endTime,
+            pause_minutes: wPause,
+            stunden: parseFloat(wStunden.toFixed(2)),
+            project_id: null,
+            disturbance_id: newDisturbance.id,
+            taetigkeit: `Regiebericht: ${formData.kundeName.trim()}`,
+            location_type: "baustelle",
+          });
+          if (timeError) console.error("Time entry creation failed:", timeError);
+        }
       }
-
-      // Add main worker entry
-      await supabase.from("disturbance_workers").insert({
-        disturbance_id: newDisturbance.id,
-        user_id: user.id,
-        is_main: true,
-      });
 
       // Create materials
       const validMaterials = materials.filter(m => m.material.trim());
@@ -326,7 +418,10 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
                     id="startTime"
                     type="time"
                     value={formData.startTime}
-                    onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
+                    onChange={(e) => {
+                      setFormData({ ...formData, startTime: e.target.value });
+                      setWorkers(prev => prev.map(w => w.isMain ? { ...w, startTime: e.target.value } : w));
+                    }}
                     className="h-12 text-base"
                     required
                   />
@@ -337,7 +432,10 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
                     id="endTime"
                     type="time"
                     value={formData.endTime}
-                    onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
+                    onChange={(e) => {
+                      setFormData({ ...formData, endTime: e.target.value });
+                      setWorkers(prev => prev.map(w => w.isMain ? { ...w, endTime: e.target.value } : w));
+                    }}
                     className="h-12 text-base"
                     required
                   />
@@ -411,6 +509,108 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
                   />
                 </div>
               </div>
+            </div>
+
+            {/* Workers Section */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-medium flex items-center gap-2">
+                  <Users className="h-4 w-4" />
+                  Mitarbeiter
+                </h3>
+              </div>
+
+              {/* List current workers */}
+              <div className="space-y-3">
+                {workers.map((worker, idx) => (
+                  <div key={worker.userId} className="border rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Badge variant={worker.isMain ? "default" : "secondary"}>
+                          {worker.name}
+                        </Badge>
+                        {worker.isMain && <span className="text-xs text-muted-foreground">(Ersteller)</span>}
+                      </div>
+                      {!worker.isMain && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-destructive hover:text-destructive"
+                          onClick={() => setWorkers(workers.filter((_, i) => i !== idx))}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <Label className="text-xs">Beginn</Label>
+                        <Input
+                          type="time"
+                          value={worker.startTime}
+                          onChange={(e) => {
+                            const updated = [...workers];
+                            updated[idx] = { ...updated[idx], startTime: e.target.value };
+                            setWorkers(updated);
+                            if (worker.isMain) setFormData(prev => ({ ...prev, startTime: e.target.value }));
+                          }}
+                          className="h-10 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Ende</Label>
+                        <Input
+                          type="time"
+                          value={worker.endTime}
+                          onChange={(e) => {
+                            const updated = [...workers];
+                            updated[idx] = { ...updated[idx], endTime: e.target.value };
+                            setWorkers(updated);
+                            if (worker.isMain) setFormData(prev => ({ ...prev, endTime: e.target.value }));
+                          }}
+                          className="h-10 text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add worker dropdown */}
+              {(() => {
+                const usedIds = workers.map(w => w.userId);
+                const available = allProfiles.filter(p => !usedIds.includes(p.id));
+                if (available.length === 0) return null;
+                return (
+                  <Select
+                    onValueChange={(userId) => {
+                      const profile = allProfiles.find(p => p.id === userId);
+                      if (profile) {
+                        setWorkers([...workers, {
+                          userId: profile.id,
+                          name: `${profile.vorname} ${profile.nachname}`.trim(),
+                          isMain: false,
+                          startTime: formData.startTime,
+                          endTime: formData.endTime,
+                        }]);
+                      }
+                    }}
+                    value=""
+                  >
+                    <SelectTrigger className="h-12 text-base">
+                      <SelectValue placeholder="Mitarbeiter hinzufügen..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {available.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.vorname} {p.nachname}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                );
+              })()}
             </div>
 
             {/* Work Description Section */}

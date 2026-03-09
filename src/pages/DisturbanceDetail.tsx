@@ -43,6 +43,9 @@ type Worker = {
   is_main: boolean;
   vorname: string;
   nachname: string;
+  start_time: string | null;
+  end_time: string | null;
+  stunden: number | null;
 };
 
 const DisturbanceDetail = () => {
@@ -117,7 +120,7 @@ const DisturbanceDetail = () => {
 
       const { data: workersData } = await supabase
         .from("disturbance_workers")
-        .select("user_id, is_main")
+        .select("user_id, is_main, start_time, end_time, stunden")
         .eq("disturbance_id", id);
 
       if (workersData && workersData.length > 0) {
@@ -129,7 +132,11 @@ const DisturbanceDetail = () => {
 
         const workersWithNames: Worker[] = workersData.map(w => {
           const p = profiles?.find(pr => pr.id === w.user_id);
-          return { user_id: w.user_id, is_main: w.is_main, vorname: p?.vorname || "", nachname: p?.nachname || "" };
+          return {
+            user_id: w.user_id, is_main: w.is_main,
+            vorname: p?.vorname || "", nachname: p?.nachname || "",
+            start_time: w.start_time, end_time: w.end_time, stunden: w.stunden,
+          };
         });
         setWorkers(workersWithNames);
       } else {
@@ -403,21 +410,26 @@ const DisturbanceDetail = () => {
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
-              <div className="flex flex-wrap gap-2">
+              <div className="space-y-2">
                 {workers.map((worker) => (
-                  <Badge
-                    key={worker.user_id}
-                    variant={worker.is_main ? "default" : "secondary"}
-                    className="text-sm py-1 px-3"
-                  >
-                    {worker.vorname} {worker.nachname}
-                    {worker.is_main && " (Ersteller)"}
-                  </Badge>
+                  <div key={worker.user_id} className="flex items-center justify-between gap-2 py-1">
+                    <div className="flex items-center gap-2">
+                      <Badge variant={worker.is_main ? "default" : "secondary"} className="text-sm py-1 px-3">
+                        {worker.vorname} {worker.nachname}
+                        {worker.is_main && " (Ersteller)"}
+                      </Badge>
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {worker.start_time && worker.end_time ? (
+                        <span>{worker.start_time.slice(0, 5)} – {worker.end_time.slice(0, 5)}</span>
+                      ) : null}
+                      {worker.stunden != null && (
+                        <span className="font-semibold text-foreground ml-2">{Number(worker.stunden).toFixed(2)} h</span>
+                      )}
+                    </div>
+                  </div>
                 ))}
               </div>
-              <p className="text-xs text-muted-foreground mt-3">
-                Arbeitszeit automatisch für alle {workers.length} Mitarbeiter gebucht.
-              </p>
             </CardContent>
           </Card>
         )}

@@ -117,14 +117,15 @@ export const SignatureDialog = ({
 
       if (updateError) throw updateError;
 
-      // Get all technicians assigned to this disturbance
+      // Get all technicians assigned to this disturbance (with individual times)
       const { data: workers } = await supabase
         .from("disturbance_workers")
-        .select("user_id, is_main")
+        .select("user_id, is_main, start_time, end_time, pause_minutes, stunden")
         .eq("disturbance_id", disturbance.id)
         .order("is_main", { ascending: false }); // Main technician first
 
       let technicianNames: string[] = [];
+      let workerDetails: { name: string; startTime: string; endTime: string; stunden: number }[] = [];
 
       if (workers && workers.length > 0) {
         // Load profile data for all workers
@@ -135,11 +136,19 @@ export const SignatureDialog = ({
           .in("id", userIds);
 
         if (profiles) {
-          // Names in order of workers (main technician first)
-          technicianNames = workers.map(w => {
+          workers.forEach(w => {
             const profile = profiles.find(p => p.id === w.user_id);
-            return profile ? `${profile.vorname} ${profile.nachname}`.trim() : "";
-          }).filter(name => name.length > 0);
+            const name = profile ? `${profile.vorname} ${profile.nachname}`.trim() : "";
+            if (name) {
+              technicianNames.push(name);
+              workerDetails.push({
+                name,
+                startTime: w.start_time?.slice(0, 5) || disturbance.start_time.slice(0, 5),
+                endTime: w.end_time?.slice(0, 5) || disturbance.end_time.slice(0, 5),
+                stunden: w.stunden ?? disturbance.stunden,
+              });
+            }
+          });
         }
       }
 
@@ -153,13 +162,16 @@ export const SignatureDialog = ({
             .eq("id", session.session.user.id)
             .single();
           if (profile) {
-            technicianNames = [`${profile.vorname} ${profile.nachname}`.trim()];
+            const name = `${profile.vorname} ${profile.nachname}`.trim();
+            technicianNames = [name];
+            workerDetails = [{ name, startTime: disturbance.start_time.slice(0, 5), endTime: disturbance.end_time.slice(0, 5), stunden: disturbance.stunden }];
           }
         }
       }
 
       if (technicianNames.length === 0) {
         technicianNames = ["Techniker"];
+        workerDetails = [{ name: "Techniker", startTime: disturbance.start_time.slice(0, 5), endTime: disturbance.end_time.slice(0, 5), stunden: disturbance.stunden }];
       }
 
       // Send email via edge function
@@ -171,6 +183,7 @@ export const SignatureDialog = ({
           },
           materials,
           technicianNames,
+          workerDetails,
           photos,
         },
       });

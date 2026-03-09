@@ -26,6 +26,8 @@ import Notepad from "./pages/Notepad";
 import MaterialList from "./pages/MaterialList";
 import Disturbances from "./pages/Disturbances";
 import DisturbanceDetail from "./pages/DisturbanceDetail";
+import DeliveryNotes from "./pages/DeliveryNotes";
+import DeliveryNoteDetail from "./pages/DeliveryNoteDetail";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -143,6 +145,8 @@ function AppContent() {
         <Route path="/notepad" element={<Notepad />} />
         <Route path="/disturbances" element={<Disturbances />} />
         <Route path="/disturbances/:id" element={<DisturbanceDetail />} />
+        <Route path="/delivery-notes" element={<DeliveryNotes />} />
+        <Route path="/delivery-notes/:id" element={<DeliveryNoteDetail />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
 
