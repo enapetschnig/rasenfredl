@@ -157,7 +157,8 @@ const DisturbanceDetail = () => {
     if (!disturbance) return;
     setDeleting(true);
 
-    await supabase.from("time_entries").delete().eq("disturbance_id", disturbance.id);
+    // Use RPC to delete all time entries (bypasses RLS for other users' entries)
+    await supabase.rpc("delete_disturbance_time_entries", { p_disturbance_id: disturbance.id });
 
     const { error } = await supabase.from("disturbances").delete().eq("id", disturbance.id);
 

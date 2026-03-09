@@ -277,20 +277,72 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
         });
       }
 
-      // Update time entry for this disturbance (main user only)
+      // Delete ALL time entries for this disturbance (RPC bypasses RLS)
+      await supabase.rpc("delete_disturbance_time_entries", { p_disturbance_id: editData.id });
+
+      // Re-create time entry for main user
       const mainWorker = workers.find(w => w.isMain);
-      await supabase
-        .from("time_entries")
-        .update({
+      if (mainWorker) {
+        const mwPause = calculateAutoLunchBreak(mainWorker.startTime, mainWorker.endTime);
+        const [mSH, mSM] = mainWorker.startTime.split(":").map(Number);
+        const [mEH, mEM] = mainWorker.endTime.split(":").map(Number);
+        const mStunden = Math.max(0, ((mEH * 60 + mEM) - (mSH * 60 + mSM) - mwPause) / 60);
+
+        const { data: mainEntry } = await supabase.from("time_entries").insert({
+          user_id: user.id,
           datum: formData.datum,
-          start_time: mainWorker?.startTime || formData.startTime,
-          end_time: mainWorker?.endTime || formData.endTime,
-          pause_minutes: pauseMinutes,
-          stunden,
+          start_time: mainWorker.startTime,
+          end_time: mainWorker.endTime,
+          pause_minutes: mwPause,
+          stunden: parseFloat(mStunden.toFixed(2)),
+          project_id: null,
+          disturbance_id: editData.id,
           taetigkeit: `Regiebericht: ${formData.kundeName.trim()}`,
-        })
-        .eq("disturbance_id", editData.id)
-        .eq("user_id", user.id);
+          location_type: "baustelle",
+        }).select("id").single();
+
+        // Create time entries for non-main workers via edge function
+        const nonMainWorkers = workers.filter(w => w.userId !== user.id);
+        if (nonMainWorkers.length > 0) {
+          const teamEntries = nonMainWorkers.map(w => {
+            const wp = calculateAutoLunchBreak(w.startTime, w.endTime);
+            const [sH, sM] = w.startTime.split(":").map(Number);
+            const [eH, eM] = w.endTime.split(":").map(Number);
+            const wSt = Math.max(0, ((eH * 60 + eM) - (sH * 60 + sM) - wp) / 60);
+            return {
+              user_id: w.userId,
+              datum: formData.datum,
+              start_time: w.startTime,
+              end_time: w.endTime,
+              pause_minutes: wp,
+              stunden: parseFloat(wSt.toFixed(2)),
+              project_id: null,
+              disturbance_id: editData.id,
+              taetigkeit: `Regiebericht: ${formData.kundeName.trim()}`,
+              location_type: "baustelle",
+            };
+          });
+
+          await supabase.functions.invoke("create-team-time-entries", {
+            body: {
+              mainEntry: {
+                user_id: user.id,
+                datum: formData.datum,
+                start_time: mainWorker.startTime,
+                end_time: mainWorker.endTime,
+                pause_minutes: mwPause,
+                stunden: parseFloat(mStunden.toFixed(2)),
+                disturbance_id: editData.id,
+                taetigkeit: `Regiebericht: ${formData.kundeName.trim()}`,
+                location_type: "baustelle",
+              },
+              teamEntries,
+              skipMainEntry: true,
+              mainEntryId: mainEntry?.id,
+            },
+          });
+        }
+      }
 
       // Update materials
       await supabase.from("disturbance_materials").delete().eq("disturbance_id", editData.id);
@@ -323,7 +375,10 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
         return;
       }
 
-      // Insert workers with individual times
+      // Insert workers with individual times + create time entries
+      const mainWorker = workers.find(w => w.isMain) || workers[0];
+      let mainTimeEntryId: string | undefined;
+
       for (const worker of workers) {
         const wPause = calculateAutoLunchBreak(worker.startTime, worker.endTime);
         const [wSH, wSM] = worker.startTime.split(":").map(Number);
@@ -340,9 +395,9 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
           stunden: parseFloat(wStunden.toFixed(2)),
         });
 
-        // Create time entry for each worker (only for main user due to RLS)
+        // Create time entry for main user directly (RLS allows own entries)
         if (worker.userId === user.id) {
-          const { error: timeError } = await supabase.from("time_entries").insert({
+          const { data: mainEntry, error: timeError } = await supabase.from("time_entries").insert({
             user_id: worker.userId,
             datum: formData.datum,
             start_time: worker.startTime,
@@ -353,9 +408,58 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
             disturbance_id: newDisturbance.id,
             taetigkeit: `Regiebericht: ${formData.kundeName.trim()}`,
             location_type: "baustelle",
-          });
+          }).select("id").single();
           if (timeError) console.error("Time entry creation failed:", timeError);
+          else mainTimeEntryId = mainEntry?.id;
         }
+      }
+
+      // Create time entries for non-main workers via edge function (bypasses RLS)
+      const nonMainWorkers = workers.filter(w => w.userId !== user.id);
+      if (nonMainWorkers.length > 0) {
+        const mwPause = calculateAutoLunchBreak(mainWorker.startTime, mainWorker.endTime);
+        const [mSH, mSM] = mainWorker.startTime.split(":").map(Number);
+        const [mEH, mEM] = mainWorker.endTime.split(":").map(Number);
+        const mStunden = Math.max(0, ((mEH * 60 + mEM) - (mSH * 60 + mSM) - mwPause) / 60);
+
+        const teamEntries = nonMainWorkers.map(w => {
+          const wp = calculateAutoLunchBreak(w.startTime, w.endTime);
+          const [sH, sM] = w.startTime.split(":").map(Number);
+          const [eH, eM] = w.endTime.split(":").map(Number);
+          const wSt = Math.max(0, ((eH * 60 + eM) - (sH * 60 + sM) - wp) / 60);
+          return {
+            user_id: w.userId,
+            datum: formData.datum,
+            start_time: w.startTime,
+            end_time: w.endTime,
+            pause_minutes: wp,
+            stunden: parseFloat(wSt.toFixed(2)),
+            project_id: null,
+            disturbance_id: newDisturbance.id,
+            taetigkeit: `Regiebericht: ${formData.kundeName.trim()}`,
+            location_type: "baustelle",
+          };
+        });
+
+        const { error: teamError } = await supabase.functions.invoke("create-team-time-entries", {
+          body: {
+            mainEntry: {
+              user_id: user.id,
+              datum: formData.datum,
+              start_time: mainWorker.startTime,
+              end_time: mainWorker.endTime,
+              pause_minutes: mwPause,
+              stunden: parseFloat(mStunden.toFixed(2)),
+              disturbance_id: newDisturbance.id,
+              taetigkeit: `Regiebericht: ${formData.kundeName.trim()}`,
+              location_type: "baustelle",
+            },
+            teamEntries,
+            skipMainEntry: true,
+            mainEntryId: mainTimeEntryId,
+          },
+        });
+        if (teamError) console.error("Team time entries failed:", teamError);
       }
 
       // Create materials
