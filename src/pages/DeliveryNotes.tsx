@@ -40,6 +40,13 @@ const DeliveryNotes = () => {
     checkAuth();
   }, []);
 
+  // Refetch when filter params change
+  useEffect(() => {
+    if (!loading) {
+      fetchNotes();
+    }
+  }, [projectFilter, disturbanceFilter]);
+
   const checkAuth = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
@@ -51,6 +58,7 @@ const DeliveryNotes = () => {
 
   const fetchNotes = async () => {
     setLoading(true);
+    setFilterLabel(null);
 
     let query = supabase.from("delivery_notes").select("*").order("datum", { ascending: false });
 
