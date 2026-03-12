@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Calendar, Clock, User, Mail, Phone, MapPin, FileText, Package, Plus, Trash2, ChevronDown, Check, X, Users, Receipt, ExternalLink } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { calculateAutoLunchBreak } from "@/lib/workingHours";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,7 @@ type WorkerEntry = {
   isMain: boolean;
   startTime: string;
   endTime: string;
+  hasPause: boolean;
 };
 
 type ProfileOption = {
@@ -85,7 +86,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
     datum: format(new Date(), "yyyy-MM-dd"),
     startTime: "08:00",
     endTime: "10:00",
-    pauseMinutes: 0,
+    hasPause: true,
     kundeName: "",
     kundeEmail: "",
     kundeAdresse: "",
@@ -112,7 +113,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
         datum: editData.datum,
         startTime: editData.start_time.slice(0, 5),
         endTime: editData.end_time.slice(0, 5),
-        pauseMinutes: editData.pause_minutes,
+        hasPause: editData.pause_minutes > 0,
         kundeName: editData.kunde_name,
         kundeEmail: editData.kunde_email || "",
         kundeAdresse: editData.kunde_adresse || "",
@@ -129,7 +130,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
         datum: format(new Date(), "yyyy-MM-dd"),
         startTime: "08:00",
         endTime: "10:00",
-        pauseMinutes: 0,
+        hasPause: true,
         kundeName: "",
         kundeEmail: "",
         kundeAdresse: "",
@@ -151,6 +152,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
                 isMain: true,
                 startTime: "08:00",
                 endTime: "10:00",
+                hasPause: true,
               }]);
             });
         }
@@ -161,7 +163,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
   const loadExistingWorkers = async (disturbanceId: string, defaultStart: string, defaultEnd: string) => {
     const { data: workersData } = await supabase
       .from("disturbance_workers")
-      .select("user_id, is_main, start_time, end_time")
+      .select("user_id, is_main, start_time, end_time, pause_minutes")
       .eq("disturbance_id", disturbanceId);
     if (workersData && workersData.length > 0) {
       const userIds = workersData.map(w => w.user_id);
@@ -175,6 +177,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
           isMain: w.is_main,
           startTime: w.start_time?.slice(0, 5) || defaultStart,
           endTime: w.end_time?.slice(0, 5) || defaultEnd,
+          hasPause: (w.pause_minutes || 0) > 0,
         };
       }));
     }
@@ -222,7 +225,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
   const calculateHours = (): number => {
     const [startH, startM] = formData.startTime.split(":").map(Number);
     const [endH, endM] = formData.endTime.split(":").map(Number);
-    const pauseMinutes = calculateAutoLunchBreak(formData.startTime, formData.endTime);
+    const pauseMinutes = formData.hasPause ? 30 : 0;
     const totalMinutes = (endH * 60 + endM) - (startH * 60 + startM) - pauseMinutes;
     return Math.max(0, totalMinutes / 60);
   };
@@ -323,7 +326,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
     }
 
     const stunden = calculateHours();
-    const pauseMinutes = calculateAutoLunchBreak(formData.startTime, formData.endTime);
+    const pauseMinutes = formData.hasPause ? 30 : 0;
 
     const disturbanceData = {
       user_id: user.id,
@@ -355,7 +358,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
       // Update workers: delete existing, re-insert
       await supabase.from("disturbance_workers").delete().eq("disturbance_id", editData.id);
       for (const worker of workers) {
-        const wPause = calculateAutoLunchBreak(worker.startTime, worker.endTime);
+        const wPause = worker.hasPause ? 30 : 0;
         const [wSH, wSM] = worker.startTime.split(":").map(Number);
         const [wEH, wEM] = worker.endTime.split(":").map(Number);
         const wStunden = Math.max(0, ((wEH * 60 + wEM) - (wSH * 60 + wSM) - wPause) / 60);
@@ -377,7 +380,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
       // Re-create time entry for main user
       const mainWorker = workers.find(w => w.isMain);
       if (mainWorker) {
-        const mwPause = calculateAutoLunchBreak(mainWorker.startTime, mainWorker.endTime);
+        const mwPause = mainWorker.hasPause ? 30 : 0;
         const [mSH, mSM] = mainWorker.startTime.split(":").map(Number);
         const [mEH, mEM] = mainWorker.endTime.split(":").map(Number);
         const mStunden = Math.max(0, ((mEH * 60 + mEM) - (mSH * 60 + mSM) - mwPause) / 60);
@@ -399,7 +402,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
         const nonMainWorkers = workers.filter(w => w.userId !== user.id);
         if (nonMainWorkers.length > 0) {
           const teamEntries = nonMainWorkers.map(w => {
-            const wp = calculateAutoLunchBreak(w.startTime, w.endTime);
+            const wp = w.hasPause ? 30 : 0;
             const [sH, sM] = w.startTime.split(":").map(Number);
             const [eH, eM] = w.endTime.split(":").map(Number);
             const wSt = Math.max(0, ((eH * 60 + eM) - (sH * 60 + sM) - wp) / 60);
@@ -499,7 +502,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
       let mainTimeEntryId: string | undefined;
 
       for (const worker of workers) {
-        const wPause = calculateAutoLunchBreak(worker.startTime, worker.endTime);
+        const wPause = worker.hasPause ? 30 : 0;
         const [wSH, wSM] = worker.startTime.split(":").map(Number);
         const [wEH, wEM] = worker.endTime.split(":").map(Number);
         const wStunden = Math.max(0, ((wEH * 60 + wEM) - (wSH * 60 + wSM) - wPause) / 60);
@@ -536,13 +539,13 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
       // Create time entries for non-main workers via edge function (bypasses RLS)
       const nonMainWorkers = workers.filter(w => w.userId !== user.id);
       if (nonMainWorkers.length > 0) {
-        const mwPause = calculateAutoLunchBreak(mainWorker.startTime, mainWorker.endTime);
+        const mwPause = mainWorker.hasPause ? 30 : 0;
         const [mSH, mSM] = mainWorker.startTime.split(":").map(Number);
         const [mEH, mEM] = mainWorker.endTime.split(":").map(Number);
         const mStunden = Math.max(0, ((mEH * 60 + mEM) - (mSH * 60 + mSM) - mwPause) / 60);
 
         const teamEntries = nonMainWorkers.map(w => {
-          const wp = calculateAutoLunchBreak(w.startTime, w.endTime);
+          const wp = w.hasPause ? 30 : 0;
           const [sH, sM] = w.startTime.split(":").map(Number);
           const [eH, eM] = w.endTime.split(":").map(Number);
           const wSt = Math.max(0, ((eH * 60 + eM) - (sH * 60 + sM) - wp) / 60);
@@ -665,6 +668,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
                   <Input
                     id="startTime"
                     type="time"
+                    step="900"
                     value={formData.startTime}
                     onChange={(e) => {
                       setFormData({ ...formData, startTime: e.target.value });
@@ -679,6 +683,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
                   <Input
                     id="endTime"
                     type="time"
+                    step="900"
                     value={formData.endTime}
                     onChange={(e) => {
                       setFormData({ ...formData, endTime: e.target.value });
@@ -692,10 +697,23 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
                   <div className="bg-muted rounded-xl px-3 py-3 w-full text-center">
                     <span className="text-sm text-muted-foreground">Stunden: </span>
                     <span className="font-bold text-primary text-lg">{calculateHours().toFixed(2)}</span>
-                    {calculateAutoLunchBreak(formData.startTime, formData.endTime) > 0 && (
-                      <p className="text-xs text-muted-foreground mt-1">inkl. 60 Min. Mittagspause</p>
+                    {formData.hasPause && (
+                      <p className="text-xs text-muted-foreground mt-1">inkl. 30 Min. Pause</p>
                     )}
                   </div>
+                </div>
+                <div className="col-span-2 flex items-center gap-2 bg-muted/50 rounded-lg px-3 py-2">
+                  <Checkbox
+                    id="pause-main"
+                    checked={formData.hasPause}
+                    onCheckedChange={(checked) => {
+                      setFormData({ ...formData, hasPause: !!checked });
+                      setWorkers(prev => prev.map(w => w.isMain ? { ...w, hasPause: !!checked } : w));
+                    }}
+                  />
+                  <Label htmlFor="pause-main" className="text-sm cursor-pointer">
+                    Pause (30 Min.)
+                  </Label>
                 </div>
               </div>
             </div>
@@ -796,6 +814,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
                         <Label className="text-xs">Beginn</Label>
                         <Input
                           type="time"
+                          step="900"
                           value={worker.startTime}
                           onChange={(e) => {
                             const updated = [...workers];
@@ -810,6 +829,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
                         <Label className="text-xs">Ende</Label>
                         <Input
                           type="time"
+                          step="900"
                           value={worker.endTime}
                           onChange={(e) => {
                             const updated = [...workers];
@@ -820,6 +840,21 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
                           className="h-10 text-sm"
                         />
                       </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id={`worker-pause-${worker.userId}`}
+                        checked={worker.hasPause}
+                        onCheckedChange={(checked) => {
+                          const updated = [...workers];
+                          updated[idx] = { ...updated[idx], hasPause: !!checked };
+                          setWorkers(updated);
+                          if (worker.isMain) setFormData(prev => ({ ...prev, hasPause: !!checked }));
+                        }}
+                      />
+                      <Label htmlFor={`worker-pause-${worker.userId}`} className="text-xs cursor-pointer">
+                        Pause (30 Min.)
+                      </Label>
                     </div>
                   </div>
                 ))}
@@ -841,6 +876,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
                           isMain: false,
                           startTime: formData.startTime,
                           endTime: formData.endTime,
+                          hasPause: formData.hasPause,
                         }]);
                       }
                     }}

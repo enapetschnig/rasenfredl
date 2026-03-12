@@ -23,8 +23,8 @@ import {
   getWeeklyTargetHours,
   getTotalWorkingHours,
   getAustrianHoliday,
-  calculateAutoLunchBreak,
 } from "@/lib/workingHours";
+import { Checkbox } from "@/components/ui/checkbox";
 import { FillRemainingHoursDialog } from "@/components/FillRemainingHoursDialog";
 import { useWorkTypes } from "@/hooks/useWorkTypes";
 
@@ -44,7 +44,7 @@ type ExistingEntry = {
   project_name: string | null;
   project_id: string | null;
   plz: string | null;
-  pause_start: string | null;
+  pause_minutes: number;
   location_type: string | null;
 };
 
@@ -66,9 +66,10 @@ interface TimeBlock {
   endTime: string;
   selectedEmployees: string[];
   manualHours: string;
+  hasPause: boolean;
 }
 
-const createDefaultBlock = (startTime = "", endTime = ""): TimeBlock => ({
+const createDefaultBlock = (startTime = "", endTime = "", hasPause = true): TimeBlock => ({
   id: crypto.randomUUID(),
   locationType: "baustelle",
   projectId: "",
@@ -77,6 +78,7 @@ const createDefaultBlock = (startTime = "", endTime = ""): TimeBlock => ({
   endTime,
   selectedEmployees: [],
   manualHours: "",
+  hasPause,
 });
 
 const TimeTracking = () => {
@@ -141,7 +143,7 @@ const TimeTracking = () => {
         end_time,
         stunden,
         taetigkeit,
-        pause_start,
+        pause_minutes,
         project_id,
         location_type,
         projects (name, plz)
@@ -170,7 +172,7 @@ const TimeTracking = () => {
         project_name: entry.projects?.name || null,
         project_id: entry.project_id || null,
         plz: entry.projects?.plz || null,
-        pause_start: entry.pause_start || null,
+        pause_minutes: entry.pause_minutes || 0,
         location_type: entry.location_type || null,
       }));
       setExistingDayEntries(entries);
@@ -247,6 +249,7 @@ const TimeTracking = () => {
         endTime: entry.end_time.substring(0, 5),
         selectedEmployees: [],
         manualHours: "",
+        hasPause: entry.pause_minutes > 0,
       }));
       setTimeBlocks(blocks);
       setEditingEntryIds(existingDayEntries.map(e => e.id));
@@ -406,10 +409,9 @@ const TimeTracking = () => {
     ));
   };
 
-  // Calculate pause minutes for a block (automatic lunch break 12:00-13:00)
+  // Calculate pause minutes for a block
   const calculateBlockPauseMinutes = (block: TimeBlock): number => {
-    if (!block.startTime || !block.endTime) return 0;
-    return calculateAutoLunchBreak(block.startTime, block.endTime);
+    return block.hasPause ? 30 : 0;
   };
 
   // Calculate hours for a single block
@@ -736,8 +738,8 @@ const TimeTracking = () => {
         start_time: block.startTime,
         end_time: block.endTime,
         pause_minutes: pauseMinutes,
-        pause_start: pauseMinutes > 0 ? "12:00" : null,
-        pause_end: pauseMinutes > 0 ? "13:00" : null,
+        pause_start: null,
+        pause_end: null,
         location_type: block.locationType,
         notizen: null,
         week_type: null,
@@ -770,8 +772,8 @@ const TimeTracking = () => {
           start_time: block.startTime,
           end_time: block.endTime,
           pause_minutes: pauseMinutes,
-          pause_start: pauseMinutes > 0 ? "12:00" : null,
-          pause_end: pauseMinutes > 0 ? "13:00" : null,
+          pause_start: null,
+          pause_end: null,
           location_type: block.locationType,
           notizen: null,
           week_type: null,
@@ -841,6 +843,7 @@ const TimeTracking = () => {
         endTime: entry.end_time.substring(0, 5),
         selectedEmployees: [],
         manualHours: "",
+        hasPause: entry.pause_minutes > 0,
       };
       setTimeBlocks([newBlock]);
       toast({ title: "Eintrag wird bearbeitet", description: "Passen Sie die Daten an und speichern Sie erneut." });
@@ -961,7 +964,7 @@ const TimeTracking = () => {
             {/* Weekly target */}
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Badge variant="secondary" className="text-xs">{getWeeklyTargetHours()}h Wochensoll</Badge>
-              <span>Mo–Do: 8,5h • Fr: 5h</span>
+              <span>Mo–Do: 8,5h (30min Pause) • Fr: 5h</span>
             </div>
 
             {/* Existing entries + Regieberichte */}
@@ -1288,6 +1291,7 @@ const TimeTracking = () => {
                             <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Beginn</Label>
                             <Input
                               type="time"
+                              step="900"
                               value={block.startTime}
                               onChange={(e) => updateBlock(block.id, { startTime: e.target.value })}
                               required
@@ -1298,6 +1302,7 @@ const TimeTracking = () => {
                             <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Ende</Label>
                             <Input
                               type="time"
+                              step="900"
                               value={block.endTime}
                               onChange={(e) => updateBlock(block.id, { endTime: e.target.value })}
                               required
@@ -1305,12 +1310,17 @@ const TimeTracking = () => {
                             />
                           </div>
                         </div>
-                        {/* Automatische Mittagspause-Anzeige */}
-                        {calculateBlockPauseMinutes(block) > 0 && (
-                          <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2 text-center">
-                            Mittagspause 12:00–13:00 wird automatisch abgezogen (60 Min.)
-                          </div>
-                        )}
+                        {/* Pause Checkbox */}
+                        <div className="flex items-center gap-2 bg-muted/50 rounded-lg px-3 py-2">
+                          <Checkbox
+                            id={`pause-${block.id}`}
+                            checked={block.hasPause}
+                            onCheckedChange={(checked) => updateBlock(block.id, { hasPause: !!checked })}
+                          />
+                          <Label htmlFor={`pause-${block.id}`} className="text-sm cursor-pointer">
+                            Pause (30 Min.)
+                          </Label>
+                        </div>
                       </div>
 
                       {/* Regelarbeitszeit shortcut */}
@@ -1323,6 +1333,7 @@ const TimeTracking = () => {
                           if (defaults) updateBlock(block.id, {
                             startTime: defaults.startTime,
                             endTime: defaults.endTime,
+                            hasPause: defaults.hasPause,
                           });
                         }}
                         className="w-full h-10 rounded-xl text-xs gap-1.5"
@@ -1449,10 +1460,9 @@ const TimeTracking = () => {
             if (!userId) return;
 
             for (const block of blocks) {
-              const pauseMinutes = calculateAutoLunchBreak(block.startTime, block.endTime);
               const [sH, sM] = block.startTime.split(':').map(Number);
               const [eH, eM] = block.endTime.split(':').map(Number);
-              const totalMin = (eH * 60 + eM) - (sH * 60 + sM) - pauseMinutes;
+              const totalMin = (eH * 60 + eM) - (sH * 60 + sM);
               const stunden = Math.max(0, totalMin / 60);
 
               await supabase.from("time_entries").insert({
@@ -1463,9 +1473,9 @@ const TimeTracking = () => {
                 stunden,
                 start_time: block.startTime,
                 end_time: block.endTime,
-                pause_minutes: pauseMinutes,
-                pause_start: pauseMinutes > 0 ? "12:00" : null,
-                pause_end: pauseMinutes > 0 ? "13:00" : null,
+                pause_minutes: 0,
+                pause_start: null,
+                pause_end: null,
                 location_type: block.locationType,
                 notizen: null,
                 week_type: null,
@@ -1585,7 +1595,7 @@ const TimeTracking = () => {
                       const dayOfWeek = absenceDateObj.getDay();
                       if (dayOfWeek === 0 || dayOfWeek === 6) return "Wochenende: 0 Stunden";
                       if (dayOfWeek === 5) return "Freitag: 5 Stunden (07:00 - 12:00)";
-                      return "Mo-Do: 8,5 Stunden (07:00 - 16:30, 60min Pause)";
+                      return "Mo-Do: 8,5 Stunden (07:00 - 16:00, 30min Pause)";
                     })()}
                   </div>
                   <div className="pt-2 border-t">
@@ -1623,6 +1633,7 @@ const TimeTracking = () => {
                       <Label>Von</Label>
                       <Input
                         type="time"
+                        step="900"
                         value={absenceData.absenceStartTime}
                         onChange={(e) => setAbsenceData({ ...absenceData, absenceStartTime: e.target.value })}
                       />
@@ -1631,6 +1642,7 @@ const TimeTracking = () => {
                       <Label>Bis</Label>
                       <Input
                         type="time"
+                        step="900"
                         value={absenceData.absenceEndTime}
                         onChange={(e) => setAbsenceData({ ...absenceData, absenceEndTime: e.target.value })}
                       />

@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { calculateAutoLunchBreak } from "@/lib/workingHours";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
@@ -160,19 +160,15 @@ const MyHours = () => {
 
     setSavingEdit(true);
 
-    // Berechne Stunden aus Start/Endzeit mit automatischer Mittagspause
+    const pauseMinutes = editingEntry.pause_minutes || 0;
+
     let calculatedHours = 0;
     if (editingEntry.start_time && editingEntry.end_time) {
       const [startH, startM] = editingEntry.start_time.split(':').map(Number);
       const [endH, endM] = editingEntry.end_time.split(':').map(Number);
       const totalMinutes = (endH * 60 + endM) - (startH * 60 + startM);
-      const pauseMinutes = calculateAutoLunchBreak(editingEntry.start_time, editingEntry.end_time);
       calculatedHours = Math.max(0, (totalMinutes - pauseMinutes) / 60);
     }
-
-    const pauseMinutes = editingEntry.start_time && editingEntry.end_time
-      ? calculateAutoLunchBreak(editingEntry.start_time, editingEntry.end_time)
-      : 0;
 
     const { error } = await supabase
       .from("time_entries")
@@ -181,6 +177,8 @@ const MyHours = () => {
         start_time: editingEntry.start_time,
         end_time: editingEntry.end_time,
         pause_minutes: pauseMinutes,
+        pause_start: null,
+        pause_end: null,
         notizen: editingEntry.notizen,
         stunden: calculatedHours,
       })
@@ -460,49 +458,52 @@ const MyHours = () => {
                 />
               </div>
 
-              {/* Vormittag */}
+              {/* Arbeitszeit */}
               <div className="space-y-3 p-4 rounded-lg border bg-muted/30">
-                <h3 className="font-semibold text-sm">Vormittag</h3>
+                <h3 className="font-semibold text-sm">Arbeitszeit</h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <Label htmlFor="edit-morning-start">Beginn</Label>
+                    <Label htmlFor="edit-start">Beginn</Label>
                     <Input
-                      id="edit-morning-start"
+                      id="edit-start"
                       type="time"
-                      value={editingEntry.start_time || '07:30'}
+                      step="900"
+                      value={editingEntry.start_time || '07:00'}
                       onChange={(e) => setEditingEntry({...editingEntry, start_time: e.target.value})}
                     />
                   </div>
                   <div>
-                    <Label htmlFor="edit-morning-end">Ende</Label>
+                    <Label htmlFor="edit-end">Ende</Label>
                     <Input
-                      id="edit-morning-end"
+                      id="edit-end"
                       type="time"
-                      value="12:00"
-                      disabled
-                      className="bg-muted"
+                      step="900"
+                      value={editingEntry.end_time || ''}
+                      onChange={(e) => setEditingEntry({...editingEntry, end_time: e.target.value})}
                     />
                   </div>
                 </div>
-              </div>
-
-              {/* Endzeit */}
-              <div className="space-y-3 p-4 rounded-lg border bg-muted/30">
-                <h3 className="font-semibold text-sm">Ende</h3>
-                <div>
-                  <Label htmlFor="edit-end">Endzeit</Label>
-                  <Input
-                    id="edit-end"
-                    type="time"
-                    value={editingEntry.end_time || ''}
-                    onChange={(e) => setEditingEntry({...editingEntry, end_time: e.target.value})}
+                <div className="flex items-center gap-2 bg-muted/50 rounded-lg px-3 py-2">
+                  <Checkbox
+                    id="edit-pause"
+                    checked={(editingEntry.pause_minutes || 0) > 0}
+                    onCheckedChange={(checked) => setEditingEntry({...editingEntry, pause_minutes: checked ? 30 : 0})}
                   />
+                  <Label htmlFor="edit-pause" className="text-sm cursor-pointer">
+                    Pause (30 Min.)
+                  </Label>
                 </div>
-                {editingEntry.start_time && editingEntry.end_time &&
-                  calculateAutoLunchBreak(editingEntry.start_time, editingEntry.end_time) > 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    Mittagspause 12:00–13:00 wird automatisch abgezogen (60 Min.)
-                  </p>
+                {editingEntry.start_time && editingEntry.end_time && (
+                  <div className="text-sm text-muted-foreground text-center">
+                    Stunden: <span className="font-bold text-primary">
+                      {(() => {
+                        const [sH, sM] = editingEntry.start_time.split(':').map(Number);
+                        const [eH, eM] = editingEntry.end_time.split(':').map(Number);
+                        const total = Math.max(0, ((eH * 60 + eM) - (sH * 60 + sM) - (editingEntry.pause_minutes || 0)) / 60);
+                        return total.toFixed(2);
+                      })()}
+                    </span> h
+                  </div>
                 )}
               </div>
 
@@ -510,7 +511,7 @@ const MyHours = () => {
                 <Button onClick={handleUpdateEntry} className="flex-1" disabled={savingEdit}>
                   {savingEdit ? 'Wird gespeichert...' : 'Speichern'}
                 </Button>
-                <Button 
+                <Button
                   variant="destructive"
                   onClick={() => editingEntry && handleDeleteEntry(editingEntry.id)}
                   className="flex-1"

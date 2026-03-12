@@ -20,7 +20,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { getNormalWorkingHours, calculateAutoLunchBreak, calculateHoursWithAutoLunch } from "@/lib/workingHours";
+import { getNormalWorkingHours } from "@/lib/workingHours";
 
 interface TimeEntry {
   id: string;
@@ -183,23 +183,14 @@ export default function HoursReport() {
     return Math.max(0, totalHours - normalHours);
   };
 
-  // Calculate actual hours from start/end time using auto lunch break
+  // Use stored stunden from DB (already includes pause deduction)
   const getActualHours = (entry: TimeEntry): number => {
-    if (!entry.start_time || !entry.end_time) return entry.stunden;
-    return calculateHoursWithAutoLunch(
-      entry.start_time.substring(0, 5),
-      entry.end_time.substring(0, 5)
-    );
+    return entry.stunden;
   };
 
   const calculateLunchBreak = (entry: TimeEntry) => {
-    if (!entry.start_time || !entry.end_time) return null;
-    const pauseMin = calculateAutoLunchBreak(
-      entry.start_time.substring(0, 5),
-      entry.end_time.substring(0, 5)
-    );
-    if (pauseMin === 0) return null;
-    return { start: "12:00", end: "13:00" };
+    if (!entry.pause_minutes || entry.pause_minutes === 0) return null;
+    return { pauseMinutes: entry.pause_minutes };
   };
 
   const monthDays = generateMonthDays();
@@ -262,13 +253,13 @@ export default function HoursReport() {
     // Header-Zeilen dynamisch je nach includeOvertime
     if (includeOvertime) {
       worksheetData.push(
-        ["Datum", "V o r m i t t a g", "", "Unterbrechung", "N a c h m i t t a g", "", "Stunden", "Überstunden", "Ort", "Projekt", "Tätigkeit", "PLZ"],
-        ["", "Beginn", "Ende", "von - bis", "Beginn", "Ende", "Gesamt", "", "", "", "", ""]
+        ["Datum", "Arbeitszeit", "", "Pause", "", "", "Stunden", "Überstunden", "Ort", "Projekt", "Tätigkeit", "PLZ"],
+        ["", "Beginn", "Ende", "", "", "", "Gesamt", "", "", "", "", ""]
       );
     } else {
       worksheetData.push(
-        ["Datum", "V o r m i t t a g", "", "Unterbrechung", "N a c h m i t t a g", "", "Stunden", "Ort", "Projekt", "Tätigkeit", "PLZ", ""],
-        ["", "Beginn", "Ende", "von - bis", "Beginn", "Ende", "Gesamt", "", "", "", "", ""]
+        ["Datum", "Arbeitszeit", "", "Pause", "", "", "Stunden", "Ort", "Projekt", "Tätigkeit", "PLZ", ""],
+        ["", "Beginn", "Ende", "", "", "", "Gesamt", "", "", "", "", ""]
       );
     }
 
@@ -333,10 +324,10 @@ export default function HoursReport() {
             let endCol = entry.end_time?.substring(0, 5) || "";
 
             if (lunchBreak) {
-              // Hat Mittagspause: Vormittag endet bei Pausenbeginn, Nachmittag startet bei Pausenende
-              morningEnd = lunchBreak.start;
-              pauseText = `${lunchBreak.start} - ${lunchBreak.end}`;
-              afternoonStart = lunchBreak.end;
+              // Hat Pause: Zeige Pause-Info
+              morningEnd = "";
+              pauseText = `${lunchBreak.pauseMinutes} Min.`;
+              afternoonStart = "";
             } else {
               // Keine Pause (z.B. Freitag): Endzeit in Vormittag-Spalte, Nachmittag leer
               morningEnd = entry.end_time?.substring(0, 5) || "";
@@ -367,11 +358,11 @@ export default function HoursReport() {
             // Regelarbeitszeiten für Zeiten
             worksheetData.push([
               displayDay,
-              isAbsence ? "" : "07:00",                                        // Beginn Vormittag
-              isAbsence ? "" : "12:00",                                        // Ende Vormittag
-              isAbsence || isFridayCheck ? "" : "12:00 - 13:00",              // Unterbrechung
-              isAbsence || isFridayCheck ? "" : "13:00",                       // Beginn Nachmittag
-              isAbsence || isFridayCheck ? "" : "16:30",                       // Ende Nachmittag
+              isAbsence ? "" : "07:00",                                        // Beginn
+              isAbsence ? "" : (isFridayCheck ? "12:00" : "16:00"),           // Ende
+              isAbsence || isFridayCheck ? "" : "30 Min.",                     // Pause
+              "",                                                              // (unused)
+              "",                                                              // (unused)
               regelarbeitszeit.toFixed(2),
               ortText,
               projektName,
@@ -653,9 +644,9 @@ export default function HoursReport() {
                       <TableHeader>
                         <TableRow>
                           <TableHead className="w-[100px]">Datum</TableHead>
-                          <TableHead>Vormittag</TableHead>
+                          <TableHead>Arbeitszeit</TableHead>
                           <TableHead>Pause</TableHead>
-                          <TableHead>Nachmittag</TableHead>
+                          <TableHead></TableHead>
                           <TableHead className="text-right">Stunden</TableHead>
                           <TableHead className="text-right">Überstunden</TableHead>
                           <TableHead>Ort</TableHead>
@@ -738,22 +729,15 @@ export default function HoursReport() {
                                     <div className="flex items-center gap-1">
                                       <span>{entry.start_time?.substring(0, 5)}</span>
                                       <span>-</span>
-                                      <span>{lunchBreak ? lunchBreak.start : entry.end_time?.substring(0, 5)}</span>
+                                      <span>{entry.end_time?.substring(0, 5)}</span>
                                     </div>
                                   </TableCell>
                                   <TableCell>
-                                    {lunchBreak && entry.pause_minutes > 0 && (
-                                      <span className="text-sm">{lunchBreak.start} - {lunchBreak.end}</span>
+                                    {lunchBreak && (
+                                      <span className="text-sm">{lunchBreak.pauseMinutes} Min.</span>
                                     )}
                                   </TableCell>
                                   <TableCell>
-                                    {lunchBreak && (
-                                      <div className="flex items-center gap-1">
-                                        <span>{lunchBreak.end}</span>
-                                        <span>-</span>
-                                        <span>{entry.end_time?.substring(0, 5)}</span>
-                                      </div>
-                                    )}
                                   </TableCell>
                                   <TableCell className="text-right font-medium">
                                     {entryHours.toFixed(2)} h

@@ -18,7 +18,6 @@ import { useToast } from "@/hooks/use-toast";
 import { format, isSameDay, parseISO } from "date-fns";
 import { de } from "date-fns/locale";
 import * as XLSX from "xlsx-js-style";
-import { calculateHoursWithAutoLunch } from "@/lib/workingHours";
 import EmployeeDocumentsManager from "@/components/EmployeeDocumentsManager";
 import LeaveManagement from "@/components/LeaveManagement";
 
@@ -1480,9 +1479,7 @@ export default function Admin() {
                       ];
 
                       entries.forEach((entry: any) => {
-                        const hours = entry.start_time && entry.end_time
-                          ? calculateHoursWithAutoLunch(entry.start_time.substring(0, 5), entry.end_time.substring(0, 5))
-                          : entry.stunden;
+                        const hours = entry.stunden;
                         sheetData.push([
                           entry.datum,
                           entry.start_time?.substring(0, 5) || "",

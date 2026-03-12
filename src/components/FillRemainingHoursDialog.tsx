@@ -7,7 +7,6 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Clock } from "lucide-react";
-import { calculateAutoLunchBreak } from "@/lib/workingHours";
 
 type Project = {
   id: string;
@@ -64,20 +63,13 @@ function calculateFreeBlocks(
   const isFriday = dayOfWeek === 5;
 
   const dayStart = timeToMinutes("07:00");
-  const dayEnd = isFriday ? timeToMinutes("12:00") : timeToMinutes("16:30");
-  const lunchStart = timeToMinutes("12:00");
-  const lunchEnd = timeToMinutes("13:00");
+  const dayEnd = isFriday ? timeToMinutes("12:00") : timeToMinutes("16:00");
 
   // Collect all occupied intervals
   const occupied: ExistingBlock[] = existingEntries.map((e) => ({
     start: timeToMinutes(e.start_time.substring(0, 5)),
     end: timeToMinutes(e.end_time.substring(0, 5)),
   }));
-
-  // Add lunch break as occupied (on non-Friday days if day spans lunch)
-  if (!isFriday && dayEnd > lunchEnd) {
-    occupied.push({ start: lunchStart, end: lunchEnd });
-  }
 
   // Sort by start time
   occupied.sort((a, b) => a.start - b.start);
@@ -93,8 +85,7 @@ function calculateFreeBlocks(
       if (gapEnd - gapStart >= 15) {
         const startTime = minutesToTime(gapStart);
         const endTime = minutesToTime(gapEnd);
-        const pause = calculateAutoLunchBreak(startTime, endTime);
-        const hours = (gapEnd - gapStart - pause) / 60;
+        const hours = (gapEnd - gapStart) / 60;
         freeBlocks.push({ startTime, endTime, hours });
       }
     }
@@ -105,8 +96,7 @@ function calculateFreeBlocks(
   if (current < dayEnd) {
     const startTime = minutesToTime(current);
     const endTime = minutesToTime(dayEnd);
-    const pause = calculateAutoLunchBreak(startTime, endTime);
-    const hours = (dayEnd - current - pause) / 60;
+    const hours = (dayEnd - current) / 60;
     if (hours > 0.25) {
       freeBlocks.push({ startTime, endTime, hours });
     }
