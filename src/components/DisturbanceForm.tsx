@@ -4,6 +4,7 @@ import { Calendar, Clock, User, Mail, Phone, MapPin, FileText, Package, Plus, Tr
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { TimeSelect } from "@/components/ui/time-select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
@@ -665,32 +666,26 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
                 </div>
                 <div>
                   <Label htmlFor="startTime">Startzeit</Label>
-                  <Input
+                  <TimeSelect
                     id="startTime"
-                    type="time"
-                    step="900"
                     value={formData.startTime}
-                    onChange={(e) => {
-                      setFormData({ ...formData, startTime: e.target.value });
-                      setWorkers(prev => prev.map(w => w.isMain ? { ...w, startTime: e.target.value } : w));
+                    onChange={(v) => {
+                      setFormData({ ...formData, startTime: v });
+                      setWorkers(prev => prev.map(w => w.isMain ? { ...w, startTime: v } : w));
                     }}
                     className="h-12 text-base"
-                    required
                   />
                 </div>
                 <div>
                   <Label htmlFor="endTime">Endzeit</Label>
-                  <Input
+                  <TimeSelect
                     id="endTime"
-                    type="time"
-                    step="900"
                     value={formData.endTime}
-                    onChange={(e) => {
-                      setFormData({ ...formData, endTime: e.target.value });
-                      setWorkers(prev => prev.map(w => w.isMain ? { ...w, endTime: e.target.value } : w));
+                    onChange={(v) => {
+                      setFormData({ ...formData, endTime: v });
+                      setWorkers(prev => prev.map(w => w.isMain ? { ...w, endTime: v } : w));
                     }}
                     className="h-12 text-base"
-                    required
                   />
                 </div>
                 <div className="flex items-end">
@@ -812,30 +807,26 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData }: Dis
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <Label className="text-xs">Beginn</Label>
-                        <Input
-                          type="time"
-                          step="900"
+                        <TimeSelect
                           value={worker.startTime}
-                          onChange={(e) => {
+                          onChange={(v) => {
                             const updated = [...workers];
-                            updated[idx] = { ...updated[idx], startTime: e.target.value };
+                            updated[idx] = { ...updated[idx], startTime: v };
                             setWorkers(updated);
-                            if (worker.isMain) setFormData(prev => ({ ...prev, startTime: e.target.value }));
+                            if (worker.isMain) setFormData(prev => ({ ...prev, startTime: v }));
                           }}
                           className="h-10 text-sm"
                         />
                       </div>
                       <div>
                         <Label className="text-xs">Ende</Label>
-                        <Input
-                          type="time"
-                          step="900"
+                        <TimeSelect
                           value={worker.endTime}
-                          onChange={(e) => {
+                          onChange={(v) => {
                             const updated = [...workers];
-                            updated[idx] = { ...updated[idx], endTime: e.target.value };
+                            updated[idx] = { ...updated[idx], endTime: v };
                             setWorkers(updated);
-                            if (worker.isMain) setFormData(prev => ({ ...prev, endTime: e.target.value }));
+                            if (worker.isMain) setFormData(prev => ({ ...prev, endTime: v }));
                           }}
                           className="h-10 text-sm"
                         />

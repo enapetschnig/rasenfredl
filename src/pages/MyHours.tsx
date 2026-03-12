@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { TimeSelect } from "@/components/ui/time-select";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
@@ -464,22 +465,18 @@ const MyHours = () => {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <Label htmlFor="edit-start">Beginn</Label>
-                    <Input
+                    <TimeSelect
                       id="edit-start"
-                      type="time"
-                      step="900"
-                      value={editingEntry.start_time || '07:00'}
-                      onChange={(e) => setEditingEntry({...editingEntry, start_time: e.target.value})}
+                      value={editingEntry.start_time?.substring(0, 5) || '07:00'}
+                      onChange={(v) => setEditingEntry({...editingEntry, start_time: v})}
                     />
                   </div>
                   <div>
                     <Label htmlFor="edit-end">Ende</Label>
-                    <Input
+                    <TimeSelect
                       id="edit-end"
-                      type="time"
-                      step="900"
-                      value={editingEntry.end_time || ''}
-                      onChange={(e) => setEditingEntry({...editingEntry, end_time: e.target.value})}
+                      value={editingEntry.end_time?.substring(0, 5) || ''}
+                      onChange={(v) => setEditingEntry({...editingEntry, end_time: v})}
                     />
                   </div>
                 </div>

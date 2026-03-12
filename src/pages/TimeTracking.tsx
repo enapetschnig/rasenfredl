@@ -25,6 +25,7 @@ import {
   getAustrianHoliday,
 } from "@/lib/workingHours";
 import { Checkbox } from "@/components/ui/checkbox";
+import { TimeSelect } from "@/components/ui/time-select";
 import { FillRemainingHoursDialog } from "@/components/FillRemainingHoursDialog";
 import { useWorkTypes } from "@/hooks/useWorkTypes";
 
@@ -1289,24 +1290,18 @@ const TimeTracking = () => {
                         <div className="grid grid-cols-2 gap-3">
                           <div className="space-y-1.5">
                             <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Beginn</Label>
-                            <Input
-                              type="time"
-                              step="900"
+                            <TimeSelect
                               value={block.startTime}
-                              onChange={(e) => updateBlock(block.id, { startTime: e.target.value })}
-                              required
-                              className="h-12 rounded-xl text-base font-semibold text-center"
+                              onChange={(v) => updateBlock(block.id, { startTime: v })}
+                              className="h-12 rounded-xl text-base font-semibold"
                             />
                           </div>
                           <div className="space-y-1.5">
                             <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Ende</Label>
-                            <Input
-                              type="time"
-                              step="900"
+                            <TimeSelect
                               value={block.endTime}
-                              onChange={(e) => updateBlock(block.id, { endTime: e.target.value })}
-                              required
-                              className="h-12 rounded-xl text-base font-semibold text-center"
+                              onChange={(v) => updateBlock(block.id, { endTime: v })}
+                              className="h-12 rounded-xl text-base font-semibold"
                             />
                           </div>
                         </div>
@@ -1631,20 +1626,16 @@ const TimeTracking = () => {
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <Label>Von</Label>
-                      <Input
-                        type="time"
-                        step="900"
+                      <TimeSelect
                         value={absenceData.absenceStartTime}
-                        onChange={(e) => setAbsenceData({ ...absenceData, absenceStartTime: e.target.value })}
+                        onChange={(v) => setAbsenceData({ ...absenceData, absenceStartTime: v })}
                       />
                     </div>
                     <div className="space-y-1.5">
                       <Label>Bis</Label>
-                      <Input
-                        type="time"
-                        step="900"
+                      <TimeSelect
                         value={absenceData.absenceEndTime}
-                        onChange={(e) => setAbsenceData({ ...absenceData, absenceEndTime: e.target.value })}
+                        onChange={(v) => setAbsenceData({ ...absenceData, absenceEndTime: v })}
                       />
                     </div>
                   </div>
